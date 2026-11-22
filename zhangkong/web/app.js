@@ -157,6 +157,7 @@ function pickSize() {
 
 function layout() {
   restoreBall();
+  restoreNav();
   if (!canvas.width) return;
   const bounds = stage.getBoundingClientRect();
   const fit = Math.min(bounds.width / canvas.width, bounds.height / canvas.height);
@@ -322,7 +323,6 @@ async function connect(event) {
 function finish(message) {
   const current = session;
   session = null;
-  textCursor = false;
   dropSession(current);
   showGate(message || "");
 }
@@ -456,7 +456,7 @@ function updateTwoFinger() {
 
 stage.addEventListener("pointerdown", (event) => {
   if (!event.target.closest("#floatBar") && !$("floatMenu").hidden) setFloatOpen(false);
-  if (event.target.closest("#keys, #trackpad, #floatBar, #typeBox, button")) return;
+  if (event.target.closest("#keys, #trackpad, #floatBar, #navBar, #typeBox, button")) return;
   if (!$("typeBox").classList.contains("docked") && document.activeElement === $("typeBox")) {
     $("typeBox").blur();
   }
@@ -829,7 +829,6 @@ padSurface.addEventListener("pointerup", (event) => {
   rightNext = false;
   paintRight();
   clickButton(button, here.x, here.y);
-  if (button === 0 && textCursor) openTabletKeyboard();
 });
 
 padSurface.addEventListener("pointercancel", () => {
@@ -854,46 +853,21 @@ function setKeys(open) {
 }
 
 function openTabletKeyboard() {
-  setKeys(true);
   const box = $("typeBox");
+  if (box.classList.contains("docked") && document.activeElement === box) return;
+  setKeys(true);
   placeTypeBox();
+  box.classList.add("live", "docked");
   box.focus({ preventScroll: true });
-  const end = box.value.length;
-  try { box.setSelectionRange(end, end); } catch { /* 有的输入法不让直接放光标 */ }
 }
 
-let textCursor = false;
-let cursorToken = 0;
-
 function noteCursorStyle(style) {
-  const next = style || "default";
-  canvas.style.cursor = next;
-  const named = next.toLowerCase();
-  const token = ++cursorToken;
-  if (named === "text" || named === "vertical-text" || named.includes("ibeam")) {
-    textCursor = true;
-    placeTypeBox();
-    return;
-  }
-  textCursor = hotspotHint(next);
-  if (!textCursor) releasePictureTyping();
-  placeTypeBox();
-  const match = /base64,([A-Za-z0-9+/=]+)/.exec(next);
-  if (!match) return;
-  const image = new Image();
-  image.onload = () => {
-    if (token !== cursorToken) return;
-    const beam = looksLikeIbeam(image) || hotspotLooksLikeText(next, image.width, image.height);
-    if (beam) textCursor = true;
-    else if (!hotspotHint(next)) textCursor = false;
-    if (!textCursor) releasePictureTyping();
-    placeTypeBox();
-  };
-  image.src = `data:image/png;base64,${match[1]}`;
+  canvas.style.cursor = style || "default";
 }
 
 function placeTypeBox() {
   const box = $("typeBox");
+  if (box.classList.contains("docked") && document.activeElement === box) return;
   const slot = $("typeSlot");
   const slotRect = slot ? slot.getBoundingClientRect() : null;
   const docked = !$("keys").hidden && slotRect && slotRect.width > 0;
@@ -905,104 +879,11 @@ function placeTypeBox() {
     box.style.height = `${Math.max(32, slotRect.height)}px`;
     return;
   }
-  box.classList.remove("docked");
-  const live = textCursor;
-  box.classList.toggle("live", live);
-  if (!live || !canvas.width) {
-    box.style.left = "0px";
-    box.style.top = "0px";
-    box.style.width = "16px";
-    box.style.height = "16px";
-    return;
-  }
-  const canvasRect = canvas.getBoundingClientRect();
-  const y = canvasRect.top + (cursor.y / canvas.height) * canvasRect.height;
-  const height = 72;
-  box.style.left = `${canvasRect.left}px`;
-  box.style.top = `${Math.max(0, y - height / 2)}px`;
-  box.style.width = `${Math.max(220, canvasRect.width)}px`;
-  box.style.height = `${height}px`;
-}
-
-function releasePictureTyping() {
-  const box = $("typeBox");
-  if (box.classList.contains("docked") || document.activeElement !== box) return;
-  box.blur();
-}
-
-function hotspotHint(style) {
-  const hot = /\)\s*(-?\d+)\s+(-?\d+)/.exec(style || "");
-  if (!hot) return false;
-  const x = Number(hot[1]);
-  const y = Number(hot[2]);
-  return x >= 8 && y >= 8 && x <= 64 && y <= 64 && Math.abs(x - y) <= 20;
-}
-
-function hotspotLooksLikeText(style, w, h) {
-  const hot = /\)\s*(-?\d+)\s+(-?\d+)/.exec(style || "");
-  if (!hot || !w || !h) return false;
-  const x = Number(hot[1]);
-  const y = Number(hot[2]);
-  return x > w * 0.2 && y > h * 0.2
-    && Math.abs(x - w / 2) <= w * 0.3
-    && Math.abs(y - h / 2) <= h * 0.3;
-}
-
-function looksLikeIbeam(image) {
-  const w = image.width;
-  const h = image.height;
-  if (!w || !h || w > 160 || h > 160 || h < 8 || w < 5) return false;
-  const probe = document.createElement("canvas");
-  probe.width = w;
-  probe.height = h;
-  const ctx = probe.getContext("2d", { willReadFrequently: true });
-  ctx.clearRect(0, 0, w, h);
-  ctx.drawImage(image, 0, 0);
-  const data = ctx.getImageData(0, 0, w, h).data;
-  const corners = [0, w - 1, (h - 1) * w, h * w - 1];
-  let br = 0;
-  let bg = 0;
-  let bb = 0;
-  let ba = 0;
-  for (const p of corners) {
-    br += data[p * 4];
-    bg += data[p * 4 + 1];
-    bb += data[p * 4 + 2];
-    ba += data[p * 4 + 3];
-  }
-  br /= 4;
-  bg /= 4;
-  bb /= 4;
-  ba /= 4;
-  const cols = new Array(w).fill(0);
-  let ink = 0;
-  const isInk = (x, y) => {
-    const i = (y * w + x) * 4;
-    const dist = Math.abs(data[i] - br) + Math.abs(data[i + 1] - bg) + Math.abs(data[i + 2] - bb) + Math.abs(data[i + 3] - ba);
-    return dist >= 80;
-  };
-  for (let y = 0; y < h; y += 1) {
-    for (let x = 0; x < w; x += 1) {
-      if (!isInk(x, y)) continue;
-      ink += 1;
-      cols[x] += 1;
-    }
-  }
-  if (ink < 8) return false;
-  let peak = 0;
-  let peakX = 0;
-  cols.forEach((count, x) => {
-    if (count > peak) {
-      peak = count;
-      peakX = x;
-    }
-  });
-  if (peak < h * 0.45) return false;
-  if (Math.abs(peakX - (w - 1) / 2) > Math.max(4, w * 0.28)) return false;
-  let mid = 0;
-  const midY = Math.floor(h / 2);
-  for (let x = 0; x < w; x += 1) if (isInk(x, midY)) mid += 1;
-  return mid > 0 && mid < w * 0.45;
+  box.classList.remove("live", "docked");
+  box.style.left = "0px";
+  box.style.top = "0px";
+  box.style.width = "16px";
+  box.style.height = "16px";
 }
 
 function setPad(open) {
@@ -1109,6 +990,11 @@ let ballSpot;
 let ballDrag = null;
 let ballHold = 0;
 const ball = $("floatPeek");
+ball.addEventListener("touchstart", (event) => {
+  if (event.cancelable) event.preventDefault();
+}, { passive: false });
+ball.addEventListener("contextmenu", (event) => event.preventDefault());
+ball.addEventListener("selectstart", (event) => event.preventDefault());
 
 function readBallSpot() {
   if (ballSpot !== undefined) return ballSpot;
@@ -1246,6 +1132,148 @@ ball.addEventListener("pointercancel", (event) => {
   resetBallSlide();
 });
 
+const nav = $("navPeek");
+const navBar = $("navBar");
+let navSpot;
+let navDrag = null;
+let navHold = 0;
+
+function readNavSpot() {
+  if (navSpot !== undefined) return navSpot;
+  try { navSpot = JSON.parse(localStorage.getItem("zk-nav") || "null"); }
+  catch { navSpot = null; }
+  return navSpot;
+}
+
+function currentNav() {
+  const bounds = stage.getBoundingClientRect();
+  const rect = navBar.getBoundingClientRect();
+  return {
+    x: rect.left + rect.width / 2 - bounds.left,
+    bottom: bounds.bottom - rect.bottom,
+  };
+}
+
+function applyNav(centerX, bottom, persist) {
+  const bounds = stage.getBoundingClientRect();
+  if (!bounds.width || !bounds.height) return;
+  const x = Math.max(18, Math.min(bounds.width - 18, centerX));
+  const b = Math.max(0, Math.min(bounds.height - 36, bottom));
+  navBar.style.left = `${x}px`;
+  navBar.style.bottom = `${b}px`;
+  navBar.style.transform = "translateX(-50%)";
+  if (persist) {
+    navSpot = { x: x / bounds.width, b: b / bounds.height };
+    localStorage.setItem("zk-nav", JSON.stringify(navSpot));
+  }
+}
+
+function restoreNav() {
+  const spot = readNavSpot();
+  if (!spot) return;
+  const bounds = stage.getBoundingClientRect();
+  applyNav(spot.x * bounds.width, spot.b * bounds.height, false);
+}
+
+function resetNavSlide() {
+  nav.style.transition = "transform 200ms cubic-bezier(.22, .9, .24, 1)";
+  nav.style.transform = "translate(0, 0)";
+}
+
+let navTapAt = 0;
+function openTaskView() {
+  if (performance.now() - navTapAt < 700) return;
+  navTapAt = performance.now();
+  chord(["MetaLeft", "Tab"]);
+}
+nav.addEventListener("touchstart", (event) => {
+  if (event.cancelable) event.preventDefault();
+}, { passive: false });
+nav.addEventListener("contextmenu", (event) => event.preventDefault());
+nav.addEventListener("selectstart", (event) => event.preventDefault());
+nav.addEventListener("mousedown", (event) => {
+  event.preventDefault();
+});
+nav.addEventListener("pointerdown", (event) => {
+  event.stopPropagation();
+  navDrag = { id: event.pointerId, x: event.clientX, y: event.clientY, mode: "hold" };
+  nav.style.transition = "none";
+  clearTimeout(navHold);
+  navHold = setTimeout(() => {
+    if (!navDrag || navDrag.mode !== "hold") return;
+    navDrag.mode = "move";
+    navDrag.origin = currentNav();
+    nav.style.transform = "";
+    nav.classList.add("lift");
+    try { navigator.vibrate(12); } catch { /* 这台设备没有震动 */ }
+  }, 420);
+  try { nav.setPointerCapture(event.pointerId); } catch { /* 指针可能已经松开 */ }
+});
+nav.addEventListener("pointermove", (event) => {
+  if (!navDrag || event.pointerId !== navDrag.id) return;
+  event.stopPropagation();
+  const dx = event.clientX - navDrag.x;
+  const dy = event.clientY - navDrag.y;
+  if (navDrag.mode === "move") {
+    applyNav(navDrag.origin.x + dx, navDrag.origin.bottom - dy, false);
+    return;
+  }
+  if (navDrag.mode === "hold" && Math.hypot(dx, dy) > 8) {
+    clearTimeout(navHold);
+    navDrag.mode = "swipe";
+  }
+  if (navDrag.mode === "swipe") {
+    nav.style.transform = `translate(${Math.max(-72, Math.min(72, dx))}px, ${Math.max(-72, Math.min(72, dy))}px)`;
+  }
+});
+function endNav(event) {
+  if (!navDrag || event.pointerId !== navDrag.id) return;
+  const dx = event.clientX - navDrag.x;
+  const dy = event.clientY - navDrag.y;
+  const mode = navDrag.mode;
+  if (mode === "move") applyNav(navDrag.origin.x + dx, navDrag.origin.bottom - dy, true);
+  navDrag = null;
+  clearTimeout(navHold);
+  nav.classList.remove("lift");
+  resetNavSlide();
+  if (mode === "move") return;
+  const absX = Math.abs(dx);
+  const absY = Math.abs(dy);
+  if (mode === "swipe" && dy <= -36 && absY >= absX) {
+    chord(["MetaLeft", "KeyD"]);
+    return;
+  }
+  if (mode === "swipe" && dy >= 36 && absY >= absX) {
+    chord(["AltLeft", "ArrowLeft"]);
+    return;
+  }
+  if (mode === "swipe" && absX >= 36 && absX > absY) {
+    chord(dx > 0 ? ["AltLeft", "Tab"] : ["AltLeft", "ShiftLeft", "Tab"]);
+    return;
+  }
+  if (Math.hypot(dx, dy) < 10) openTaskView();
+}
+nav.addEventListener("touchend", (event) => {
+  if (!navDrag || navDrag.mode === "move" || navDrag.mode === "swipe") return;
+  const touch = event.changedTouches && event.changedTouches[0];
+  if (!touch) return;
+  if (Math.hypot(touch.clientX - navDrag.x, touch.clientY - navDrag.y) >= 10) return;
+  if (event.cancelable) event.preventDefault();
+  openTaskView();
+});
+nav.addEventListener("click", (event) => {
+  event.preventDefault();
+  openTaskView();
+});
+nav.addEventListener("pointerup", endNav);
+nav.addEventListener("pointercancel", (event) => {
+  if (!navDrag || event.pointerId !== navDrag.id) return;
+  navDrag = null;
+  clearTimeout(navHold);
+  nav.classList.remove("lift");
+  resetNavSlide();
+});
+
 function setImmersive(on) {
   $("desk").classList.toggle("immersive", on);
   $("floatBar").hidden = !on;
@@ -1273,7 +1301,10 @@ function exitFull() {
   layout();
 }
 
-window.addEventListener("resize", layout);
+window.addEventListener("resize", () => {
+  if (document.activeElement === $("typeBox")) return;
+  layout();
+});
 $("fitView").onclick = () => {
   view.scale = 1;
   layout();
@@ -1433,25 +1464,6 @@ function bindComposer(box) {
   });
 }
 bindComposer($("typeBox"));
-let typeTap = null;
-$("typeBox").addEventListener("pointerdown", (event) => {
-  if ($("typeBox").classList.contains("docked") || !textCursor) return;
-  typeTap = { x: event.clientX, y: event.clientY };
-  const here = pointOf(event);
-  mouseMove(here.x, here.y);
-});
-$("typeBox").addEventListener("pointerup", (event) => {
-  const tap = typeTap;
-  typeTap = null;
-  if ($("typeBox").classList.contains("docked") || !tap || !textCursor) return;
-  if (Math.hypot(event.clientX - tap.x, event.clientY - tap.y) > 18) return;
-  const here = pointOf(event);
-  clickButton(0, here.x, here.y);
-});
-$("typeBox").addEventListener("touchend", () => {
-  if ($("typeBox").classList.contains("docked") || !textCursor) return;
-  $("typeBox").focus({ preventScroll: true });
-});
 $("typeSend").onclick = flushTypeBox;
 $("rightArm").onclick = () => {
   rightNext = !rightNext;

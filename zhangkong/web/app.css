@@ -92,7 +92,7 @@ form button {
 #desk.immersive .top, #desk.immersive .dock { display: none; }
 #desk:fullscreen, #desk:-webkit-full-screen { width: 100%; height: 100%; background: #000; }
 #floatBar {
-  position: absolute; z-index: 6; left: 50%; bottom: 0;
+  position: absolute; z-index: 6; left: calc(50% + 48px); bottom: 0;
   width: 30px; height: 30px; transform: translateX(-50%);
 }
 #floatMenu {
@@ -110,15 +110,33 @@ form button {
 #floatBar #floatPeek {
   width: 30px; height: 30px; padding: 0; touch-action: none;
   border: 2px solid rgba(125, 255, 179, 0.9); border-radius: 50%;
-  background: rgba(7, 17, 14, 0.94);
-  transition: transform 200ms cubic-bezier(.22, .9, .24, 1), background 160ms ease, box-shadow 160ms ease;
+  background: rgba(7, 17, 14, 0.94); color: var(--mint);
+  font-size: 13px; line-height: 26px; text-align: center;
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+  transition: transform 200ms cubic-bezier(.22, .9, .24, 1), background 160ms ease, box-shadow 160ms ease, color 160ms ease;
 }
 #floatBar #floatPeek.lift {
   transform: scale(1.22);
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45);
 }
-#floatBar #floatPeek[aria-expanded="true"] { background: var(--mint); }
+#floatBar #floatPeek[aria-expanded="true"] { background: var(--mint); color: var(--mint-ink); }
 #floatBar button.on { background: var(--mint); color: var(--mint-ink); font-weight: 700; }
+#navBar {
+  position: absolute; z-index: 7; left: 50%; bottom: 0;
+  width: 36px; height: 36px; transform: translateX(-50%);
+}
+#navPeek {
+  width: 28px; height: 28px; margin: 4px auto 0; padding: 0; display: block;
+  border: 2px solid rgba(232, 244, 236, 0.85); border-radius: 50%;
+  background: rgba(7, 17, 14, 0.94); color: #e7f6ee;
+  font-size: 13px; line-height: 24px; text-align: center; touch-action: none;
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+  transition: transform 200ms cubic-bezier(.22, .9, .24, 1), box-shadow 160ms ease;
+}
+#navPeek.lift {
+  transform: scale(1.22);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45);
+}
 .panel-bar button {
   border: 0; border-radius: 12px; background: #183028; padding: 8px 12px;
 }
@@ -148,9 +166,10 @@ form button {
 }
 #typeBox.live {
   pointer-events: auto; opacity: 1;
-  background: rgba(255, 255, 255, 0.02); color: transparent; caret-color: transparent;
+  background: transparent; color: transparent; caret-color: transparent;
   -webkit-user-select: text; user-select: text;
 }
+#typeBox:not(.docked)::placeholder { color: transparent; opacity: 0; }
 #typeBox.docked {
   opacity: 1; color: var(--text); background: #183028; caret-color: var(--mint);
   border-radius: 8px; z-index: 6; padding: 6px 8px;
