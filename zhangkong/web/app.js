@@ -163,19 +163,31 @@ function layout() {
   if (view.scale < 1) view.scale = 1;
   const drawW = canvas.width * fit * view.scale;
   const drawH = canvas.height * fit * view.scale;
-  if (view.scale === 1) {
-    view.x = (bounds.width - drawW) / 2;
-    view.y = (bounds.height - drawH) / 2;
-  } else {
-    view.x = Math.min(0, Math.max(bounds.width - drawW, view.x));
-    view.y = Math.min(0, Math.max(bounds.height - drawH, view.y));
-  }
+  const place = (pos, stageSize, drawSize) => (
+    drawSize <= stageSize ? (stageSize - drawSize) / 2 : Math.min(0, Math.max(stageSize - drawSize, pos))
+  );
+  view.x = place(view.x, bounds.width, drawW);
+  view.y = place(view.y, bounds.height, drawH);
   canvas.style.width = `${canvas.width * fit}px`;
   canvas.style.height = `${canvas.height * fit}px`;
   canvas.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
   restorePadPosition();
   clampPad();
   placeRemoteCursor();
+}
+
+function zoomAt(nextScale, clientX, clientY) {
+  const bounds = stage.getBoundingClientRect();
+  const prev = view.scale || 1;
+  const scale = Math.min(4, Math.max(1, nextScale));
+  const fx = clientX - bounds.left;
+  const fy = clientY - bounds.top;
+  const localX = (fx - view.x) / prev;
+  const localY = (fy - view.y) / prev;
+  view.scale = scale;
+  view.x = fx - localX * scale;
+  view.y = fy - localY * scale;
+  layout();
 }
 
 function pointOf(event) {
@@ -225,6 +237,7 @@ function clearLatchedKeys() {
 function dropSession(target) {
   clearLatchedKeys();
   dragging = false;
+  fingerScroll = null;
   padDragging = false;
   if (!target) return Promise.resolve();
   try { target.releaseAllInputs(); } catch { /* 连接可能已经断了 */ }
@@ -272,7 +285,7 @@ async function connect(event) {
     builder.extension(new Extension("enable_credssp", true));
     builder.setCursorStyleCallbackContext(canvas);
     builder.setCursorStyleCallback((style) => {
-      canvas.style.cursor = style || "default";
+      noteCursorStyle(style);
     });
     session = await builder.connect();
     const desktop = session.desktopSize();
@@ -309,6 +322,7 @@ async function connect(event) {
 function finish(message) {
   const current = session;
   session = null;
+  textCursor = false;
   dropSession(current);
   showGate(message || "");
 }
@@ -323,6 +337,12 @@ const HOLD_MS = 320;
 let cursor = { x: 0, y: 0 };
 let padDragging = false;
 let dragging = false;
+let fingerScroll = null;
+
+function wheelLines(vertical, ticks) {
+  if (!ticks) return;
+  send([DeviceEvent.wheelRotations(vertical, -ticks, RotationUnit.Line)]);
+}
 let pressTimer = 0;
 let pinch = null;
 
@@ -344,6 +364,7 @@ function placeRemoteCursor() {
   const y = canvasRect.top + (cursor.y / canvas.height) * canvasRect.height;
   mark.classList.add("on");
   mark.style.transform = `translate(${x}px, ${y}px)`;
+  placeTypeBox();
 }
 
 function cursorPoint() {
@@ -384,6 +405,8 @@ function beginTwoFinger() {
     scale: view.scale,
     midX: (a.x + b.x) / 2,
     midY: (a.y + b.y) / 2,
+    viewX: view.x,
+    viewY: view.y,
     accX: 0,
     accY: 0,
     scrolled: false,
@@ -400,9 +423,15 @@ function updateTwoFinger() {
   for (const item of pointers.values()) {
     if (Math.hypot(item.x - item.ox, item.y - item.oy) > TAP_PX) item.moved = true;
   }
-  if (pinch.dist > 24 && Math.abs(dist - pinch.dist) > 28) {
+  if (pinch.dist > 24 && (pinch.zoomed || Math.abs(dist - pinch.dist) > 28)) {
     pinch.zoomed = true;
-    view.scale = Math.min(4, Math.max(1, pinch.scale * (dist / pinch.dist)));
+    const bounds = stage.getBoundingClientRect();
+    const scale = Math.min(4, Math.max(1, pinch.scale * (dist / pinch.dist)));
+    const localX = (pinch.midX - bounds.left - pinch.viewX) / pinch.scale;
+    const localY = (pinch.midY - bounds.top - pinch.viewY) / pinch.scale;
+    view.scale = scale;
+    view.x = midX - bounds.left - localX * scale;
+    view.y = midY - bounds.top - localY * scale;
     layout();
     return;
   }
@@ -416,23 +445,27 @@ function updateTwoFinger() {
     const ticks = Math.trunc(pinch.accY / step);
     pinch.accY -= ticks * step;
     pinch.scrolled = true;
-    send([DeviceEvent.wheelRotations(true, ticks > 0 ? -1 : 1, RotationUnit.Line)]);
+    wheelLines(true, ticks);
   } else if (Math.abs(pinch.accX) >= step) {
     const ticks = Math.trunc(pinch.accX / step);
     pinch.accX -= ticks * step;
     pinch.scrolled = true;
-    send([DeviceEvent.wheelRotations(false, ticks > 0 ? -1 : 1, RotationUnit.Line)]);
+    wheelLines(false, ticks);
   }
 }
 
 stage.addEventListener("pointerdown", (event) => {
   if (!event.target.closest("#floatBar") && !$("floatMenu").hidden) setFloatOpen(false);
-  if (event.target.closest("#keys, #trackpad, #floatBar, button")) return;
+  if (event.target.closest("#keys, #trackpad, #floatBar, #typeBox, button")) return;
+  if (!$("typeBox").classList.contains("docked") && document.activeElement === $("typeBox")) {
+    $("typeBox").blur();
+  }
   try { stage.setPointerCapture(event.pointerId); } catch { /* 指针可能已经松开 */ }
   pointers.set(event.pointerId, {
     x: event.clientX, y: event.clientY, ox: event.clientX, oy: event.clientY, moved: false,
   });
   if (pointers.size === 2) {
+    fingerScroll = null;
     beginTwoFinger();
     return;
   }
@@ -466,9 +499,21 @@ stage.addEventListener("pointermove", (event) => {
     updateTwoFinger();
     return;
   }
-  const travel = Math.hypot(start.x - start.ox, start.y - start.oy);
+  const travelX = start.x - start.ox;
+  const travelY = start.y - start.oy;
+  const travel = Math.hypot(travelX, travelY);
+  if (fingerScroll) {
+    fingerScroll.acc += dy;
+    const step = 18;
+    if (Math.abs(fingerScroll.acc) >= step) {
+      const ticks = Math.trunc(fingerScroll.acc / step);
+      fingerScroll.acc -= ticks * step;
+      wheelLines(true, -ticks);
+    }
+    return;
+  }
   const here = pointOf(event);
-  if (travel <= 8) {
+  if (travel <= 12) {
     mouseMove(here.x, here.y);
     rememberCursor(here.x, here.y);
     return;
@@ -477,6 +522,16 @@ stage.addEventListener("pointermove", (event) => {
   start.moved = true;
   rememberCursor(here.x, here.y);
   if (!dragging) {
+    if (Math.abs(travelY) > Math.abs(travelX) * 1.15) {
+      fingerScroll = { acc: travelY };
+      const step = 18;
+      if (Math.abs(fingerScroll.acc) >= step) {
+        const ticks = Math.trunc(fingerScroll.acc / step);
+        fingerScroll.acc -= ticks * step;
+        wheelLines(true, -ticks);
+      }
+      return;
+    }
     dragging = true;
     send([DeviceEvent.mouseMove(here.x, here.y), DeviceEvent.mouseButtonPressed(0)]);
     return;
@@ -513,6 +568,10 @@ stage.addEventListener("pointerup", (event) => {
     return;
   }
   const here = pointOf(event);
+  if (fingerScroll) {
+    fingerScroll = null;
+    return;
+  }
   if (dragging) {
     send([DeviceEvent.mouseMove(here.x, here.y), DeviceEvent.mouseButtonReleased(0)]);
     dragging = false;
@@ -530,6 +589,7 @@ stage.addEventListener("pointercancel", () => {
   pointers.clear();
   clearTimeout(pressTimer);
   pinch = null;
+  fingerScroll = null;
   releaseDrag();
 });
 
@@ -769,6 +829,7 @@ padSurface.addEventListener("pointerup", (event) => {
   rightNext = false;
   paintRight();
   clickButton(button, here.x, here.y);
+  if (button === 0 && textCursor) openTabletKeyboard();
 });
 
 padSurface.addEventListener("pointercancel", () => {
@@ -785,9 +846,163 @@ function setKeys(open) {
   $("floatKeys").classList.toggle("on", open);
   localStorage.setItem("zk-keys", open ? "1" : "0");
   if (!open) {
+    $("typeBox").blur();
     for (const name of [...held]) tapKey(name, false);
     clearLatchedKeys();
   }
+  placeTypeBox();
+}
+
+function openTabletKeyboard() {
+  setKeys(true);
+  const box = $("typeBox");
+  placeTypeBox();
+  box.focus({ preventScroll: true });
+  const end = box.value.length;
+  try { box.setSelectionRange(end, end); } catch { /* 有的输入法不让直接放光标 */ }
+}
+
+let textCursor = false;
+let cursorToken = 0;
+
+function noteCursorStyle(style) {
+  const next = style || "default";
+  canvas.style.cursor = next;
+  const named = next.toLowerCase();
+  const token = ++cursorToken;
+  if (named === "text" || named === "vertical-text" || named.includes("ibeam")) {
+    textCursor = true;
+    placeTypeBox();
+    return;
+  }
+  textCursor = hotspotHint(next);
+  if (!textCursor) releasePictureTyping();
+  placeTypeBox();
+  const match = /base64,([A-Za-z0-9+/=]+)/.exec(next);
+  if (!match) return;
+  const image = new Image();
+  image.onload = () => {
+    if (token !== cursorToken) return;
+    const beam = looksLikeIbeam(image) || hotspotLooksLikeText(next, image.width, image.height);
+    if (beam) textCursor = true;
+    else if (!hotspotHint(next)) textCursor = false;
+    if (!textCursor) releasePictureTyping();
+    placeTypeBox();
+  };
+  image.src = `data:image/png;base64,${match[1]}`;
+}
+
+function placeTypeBox() {
+  const box = $("typeBox");
+  const slot = $("typeSlot");
+  const slotRect = slot ? slot.getBoundingClientRect() : null;
+  const docked = !$("keys").hidden && slotRect && slotRect.width > 0;
+  if (docked) {
+    box.classList.add("live", "docked");
+    box.style.left = `${slotRect.left}px`;
+    box.style.top = `${slotRect.top}px`;
+    box.style.width = `${slotRect.width}px`;
+    box.style.height = `${Math.max(32, slotRect.height)}px`;
+    return;
+  }
+  box.classList.remove("docked");
+  const live = textCursor;
+  box.classList.toggle("live", live);
+  if (!live || !canvas.width) {
+    box.style.left = "0px";
+    box.style.top = "0px";
+    box.style.width = "16px";
+    box.style.height = "16px";
+    return;
+  }
+  const canvasRect = canvas.getBoundingClientRect();
+  const y = canvasRect.top + (cursor.y / canvas.height) * canvasRect.height;
+  const height = 72;
+  box.style.left = `${canvasRect.left}px`;
+  box.style.top = `${Math.max(0, y - height / 2)}px`;
+  box.style.width = `${Math.max(220, canvasRect.width)}px`;
+  box.style.height = `${height}px`;
+}
+
+function releasePictureTyping() {
+  const box = $("typeBox");
+  if (box.classList.contains("docked") || document.activeElement !== box) return;
+  box.blur();
+}
+
+function hotspotHint(style) {
+  const hot = /\)\s*(-?\d+)\s+(-?\d+)/.exec(style || "");
+  if (!hot) return false;
+  const x = Number(hot[1]);
+  const y = Number(hot[2]);
+  return x >= 8 && y >= 8 && x <= 64 && y <= 64 && Math.abs(x - y) <= 20;
+}
+
+function hotspotLooksLikeText(style, w, h) {
+  const hot = /\)\s*(-?\d+)\s+(-?\d+)/.exec(style || "");
+  if (!hot || !w || !h) return false;
+  const x = Number(hot[1]);
+  const y = Number(hot[2]);
+  return x > w * 0.2 && y > h * 0.2
+    && Math.abs(x - w / 2) <= w * 0.3
+    && Math.abs(y - h / 2) <= h * 0.3;
+}
+
+function looksLikeIbeam(image) {
+  const w = image.width;
+  const h = image.height;
+  if (!w || !h || w > 160 || h > 160 || h < 8 || w < 5) return false;
+  const probe = document.createElement("canvas");
+  probe.width = w;
+  probe.height = h;
+  const ctx = probe.getContext("2d", { willReadFrequently: true });
+  ctx.clearRect(0, 0, w, h);
+  ctx.drawImage(image, 0, 0);
+  const data = ctx.getImageData(0, 0, w, h).data;
+  const corners = [0, w - 1, (h - 1) * w, h * w - 1];
+  let br = 0;
+  let bg = 0;
+  let bb = 0;
+  let ba = 0;
+  for (const p of corners) {
+    br += data[p * 4];
+    bg += data[p * 4 + 1];
+    bb += data[p * 4 + 2];
+    ba += data[p * 4 + 3];
+  }
+  br /= 4;
+  bg /= 4;
+  bb /= 4;
+  ba /= 4;
+  const cols = new Array(w).fill(0);
+  let ink = 0;
+  const isInk = (x, y) => {
+    const i = (y * w + x) * 4;
+    const dist = Math.abs(data[i] - br) + Math.abs(data[i + 1] - bg) + Math.abs(data[i + 2] - bb) + Math.abs(data[i + 3] - ba);
+    return dist >= 80;
+  };
+  for (let y = 0; y < h; y += 1) {
+    for (let x = 0; x < w; x += 1) {
+      if (!isInk(x, y)) continue;
+      ink += 1;
+      cols[x] += 1;
+    }
+  }
+  if (ink < 8) return false;
+  let peak = 0;
+  let peakX = 0;
+  cols.forEach((count, x) => {
+    if (count > peak) {
+      peak = count;
+      peakX = x;
+    }
+  });
+  if (peak < h * 0.45) return false;
+  if (Math.abs(peakX - (w - 1) / 2) > Math.max(4, w * 0.28)) return false;
+  let mid = 0;
+  const midY = Math.floor(h / 2);
+  for (let x = 0; x < w; x += 1) if (isInk(x, midY)) mid += 1;
+  return mid > 0 && mid < w * 0.45;
 }
 
 function setPad(open) {
@@ -948,11 +1163,10 @@ function restoreBall() {
 
 function resetBallSlide() {
   ball.style.transition = "transform 200ms cubic-bezier(.22, .9, .24, 1)";
-  ball.style.transform = "translateX(0) scale(1)";
+  ball.style.transform = "translate(0, 0) scale(1)";
 }
 
 ball.addEventListener("pointerdown", (event) => {
-  event.preventDefault();
   ballDrag = { id: event.pointerId, x: event.clientX, y: event.clientY, mode: "hold" };
   ball.style.transition = "none";
   clearTimeout(ballHold);
@@ -979,9 +1193,10 @@ ball.addEventListener("pointermove", (event) => {
     ballDrag.mode = "swipe";
   }
   if (ballDrag.mode === "swipe") {
-    const slide = Math.max(-72, Math.min(72, dx));
-    const scale = 1 + Math.min(Math.abs(slide) / 72, 1) * 0.08;
-    ball.style.transform = `translateX(${slide}px) scale(${scale})`;
+    const slideX = Math.max(-72, Math.min(72, dx));
+    const slideY = Math.max(-72, Math.min(36, dy));
+    const scale = 1 + Math.min(Math.hypot(slideX, slideY) / 72, 1) * 0.08;
+    ball.style.transform = `translate(${slideX}px, ${slideY}px) scale(${scale})`;
   }
 });
 function endBall(event) {
@@ -995,14 +1210,33 @@ function endBall(event) {
   ball.classList.remove("lift");
   resetBallSlide();
   if (mode === "move") return;
-  if (mode === "swipe" && Math.abs(dx) >= 36) {
-    setFloatOpen(false);
-    if (dx < 0) setPad(true);
-    else setKeys(true);
-    return;
+  if (mode === "swipe") {
+    const absX = Math.abs(dx);
+    const absY = Math.abs(dy);
+    if (dy <= -36 && absY >= absX) {
+      setFloatOpen(false);
+      setKeys(false);
+      setPad(false);
+      return;
+    }
+    if (absX >= 36 && absX > absY) {
+      setFloatOpen(false);
+      if (dx < 0) setPad(true);
+      else {
+        summonKeyboard = true;
+        openTabletKeyboard();
+      }
+      return;
+    }
   }
   if (Math.hypot(dx, dy) < 10) setFloatOpen($("floatMenu").hidden);
 }
+let summonKeyboard = false;
+ball.addEventListener("touchend", () => {
+  if (!summonKeyboard) return;
+  summonKeyboard = false;
+  openTabletKeyboard();
+});
 ball.addEventListener("pointerup", endBall);
 ball.addEventListener("pointercancel", (event) => {
   if (!ballDrag || event.pointerId !== ballDrag.id) return;
@@ -1049,8 +1283,8 @@ stage.addEventListener("wheel", (event) => {
   if (!session || event.target.closest("#keys, #trackpad")) return;
   event.preventDefault();
   if (event.ctrlKey) {
-    view.scale = Math.min(4, Math.max(1, view.scale * (event.deltaY > 0 ? 0.9 : 1.1)));
-    layout();
+    const next = view.scale * (event.deltaY > 0 ? 0.9 : 1.1);
+    zoomAt(next, event.clientX, event.clientY);
     return;
   }
   const amount = event.deltaY > 0 ? -1 : 1;
@@ -1099,7 +1333,10 @@ for (const [label, code, extra] of KEYS) {
   grid.appendChild(button);
 }
 
-$("keyToggle").onclick = () => setKeys($("keys").hidden);
+$("keyToggle").onclick = () => {
+  if ($("keys").hidden) openTabletKeyboard();
+  else setKeys(false);
+};
 $("keyFold").onclick = () => setKeys(false);
 $("padToggle").onclick = () => setPad($("trackpad").hidden);
 $("padHelp").onclick = () => {
@@ -1123,7 +1360,8 @@ for (const button of document.querySelectorAll("[data-key]")) {
   });
 }
 $("floatKeys").onclick = () => {
-  setKeys($("keys").hidden);
+  if ($("keys").hidden) openTabletKeyboard();
+  else setKeys(false);
   setFloatOpen(false);
 };
 $("floatPad").onclick = () => {
@@ -1153,22 +1391,6 @@ document.addEventListener("webkitfullscreenchange", () => {
 });
 setKeys(localStorage.getItem("zk-keys") === "1");
 setPad(localStorage.getItem("zk-pad-open") !== "0");
-function flushTypeBox() {
-  const box = $("typeBox");
-  const text = box.value;
-  if (!text || !session) return;
-  box.value = "";
-  typeText(text);
-}
-let composing = false;
-$("typeBox").addEventListener("compositionstart", () => { composing = true; });
-$("typeBox").addEventListener("compositionend", () => {
-  composing = false;
-  flushTypeBox();
-});
-$("typeBox").addEventListener("input", () => {
-  if (!composing) flushTypeBox();
-});
 let lastRemoteDelete = 0;
 function remoteDelete(forward) {
   const now = Date.now();
@@ -1178,23 +1400,57 @@ function remoteDelete(forward) {
   tapKey(code, true);
   tapKey(code, false);
 }
-function deleteIsLocal() {
-  return composing || $("typeBox").value.length > 0;
+function flushTypeBox(box = $("typeBox")) {
+  const text = box.value;
+  if (!text || !session) return;
+  box.value = "";
+  typeText(text);
 }
-$("typeBox").addEventListener("beforeinput", (event) => {
-  if (!session) return;
-  const forward = event.inputType === "deleteContentForward";
-  const backward = event.inputType === "deleteContentBackward";
-  if (!forward && !backward) return;
-  if (deleteIsLocal()) return;
-  event.preventDefault();
-  remoteDelete(forward);
+let composing = false;
+function bindComposer(box) {
+  box.addEventListener("compositionstart", () => { composing = true; });
+  box.addEventListener("compositionend", () => {
+    composing = false;
+    flushTypeBox(box);
+  });
+  box.addEventListener("input", () => {
+    if (!composing) flushTypeBox(box);
+  });
+  box.addEventListener("beforeinput", (event) => {
+    if (!session) return;
+    const forward = event.inputType === "deleteContentForward";
+    const backward = event.inputType === "deleteContentBackward";
+    if (!forward && !backward) return;
+    if (composing || box.value.length > 0) return;
+    event.preventDefault();
+    remoteDelete(forward);
+  });
+  box.addEventListener("keydown", (event) => {
+    if (!session || (event.key !== "Backspace" && event.key !== "Delete")) return;
+    if (composing || box.value.length > 0) return;
+    event.preventDefault();
+    remoteDelete(event.key === "Delete");
+  });
+}
+bindComposer($("typeBox"));
+let typeTap = null;
+$("typeBox").addEventListener("pointerdown", (event) => {
+  if ($("typeBox").classList.contains("docked") || !textCursor) return;
+  typeTap = { x: event.clientX, y: event.clientY };
+  const here = pointOf(event);
+  mouseMove(here.x, here.y);
 });
-$("typeBox").addEventListener("keydown", (event) => {
-  if (!session || (event.key !== "Backspace" && event.key !== "Delete")) return;
-  if (deleteIsLocal()) return;
-  event.preventDefault();
-  remoteDelete(event.key === "Delete");
+$("typeBox").addEventListener("pointerup", (event) => {
+  const tap = typeTap;
+  typeTap = null;
+  if ($("typeBox").classList.contains("docked") || !tap || !textCursor) return;
+  if (Math.hypot(event.clientX - tap.x, event.clientY - tap.y) > 18) return;
+  const here = pointOf(event);
+  clickButton(0, here.x, here.y);
+});
+$("typeBox").addEventListener("touchend", () => {
+  if ($("typeBox").classList.contains("docked") || !textCursor) return;
+  $("typeBox").focus({ preventScroll: true });
 });
 $("typeSend").onclick = flushTypeBox;
 $("rightArm").onclick = () => {

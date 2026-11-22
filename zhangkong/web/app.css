@@ -140,6 +140,22 @@ form button {
   position: absolute; left: 0; top: 0; z-index: 1; transform-origin: 0 0;
   background: #000; touch-action: none;
 }
+#typeBox {
+  position: fixed; z-index: 4; left: 0; top: 0; width: 16px; height: 16px;
+  margin: 0; border: 0; padding: 8px; resize: none; font-size: 16px;
+  color: transparent; background: transparent; caret-color: transparent;
+  opacity: 0.02; pointer-events: none; touch-action: manipulation;
+}
+#typeBox.live {
+  pointer-events: auto; opacity: 1;
+  background: rgba(255, 255, 255, 0.02); color: transparent; caret-color: transparent;
+  -webkit-user-select: text; user-select: text;
+}
+#typeBox.docked {
+  opacity: 1; color: var(--text); background: #183028; caret-color: var(--mint);
+  border-radius: 8px; z-index: 6; padding: 6px 8px;
+}
+#typeSlot { min-height: 32px; }
 #remoteCursor {
   position: fixed; z-index: 40; left: 0; top: 0;
   width: 9px; height: 11px; display: none; pointer-events: none;

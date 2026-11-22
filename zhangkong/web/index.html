@@ -82,7 +82,7 @@
           <button type="button" data-chord="ControlLeft,ShiftLeft,Escape">任务管理器</button>
         </div>
         <label class="type-row">
-          <textarea id="typeBox" rows="1" placeholder="中文在这里输入" title="选完词会发到电脑，删除键会删掉电脑上刚打的字。"></textarea>
+          <span id="typeSlot"></span>
           <button type="button" id="typeSend">发送</button>
         </label>
       </section>
@@ -120,6 +120,7 @@
         <button type="button" id="floatPeek" aria-expanded="false" aria-label="菜单"></button>
       </div>
     </div>
+    <textarea id="typeBox" rows="1" inputmode="text" enterkeyhint="send" autocomplete="off" autocapitalize="off" placeholder="中文在这里输入" title="选完词会发到电脑，删除键会删掉电脑上刚打的字。"></textarea>
     <footer class="dock">
       <button type="button" id="keyToggle">键盘</button>
       <button type="button" id="padToggle">触控板</button>
