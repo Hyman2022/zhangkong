@@ -1,0 +1,113 @@
+:root {
+  color-scheme: dark;
+  --bg: #07110e;
+  --card: #10211b;
+  --line: rgba(232, 244, 236, 0.12);
+  --text: #e7f6ee;
+  --muted: #8eaea0;
+  --mint: #7dffb3;
+  --mint-ink: #062117;
+  --danger: #ff8d7a;
+  --dock: 0px;
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+[hidden] { display: none !important; }
+html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); }
+body {
+  background:
+    radial-gradient(900px 420px at 0% -10%, rgba(125, 255, 179, 0.16), transparent 55%),
+    var(--bg);
+}
+button, input, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+h1, h2, p { margin: 0; }
+
+#gate {
+  width: min(980px, calc(100% - 28px));
+  margin: 0 auto;
+  padding: 28px 0 48px;
+  display: grid;
+  gap: 18px;
+}
+.brand { display: flex; gap: 16px; align-items: flex-start; }
+.mark {
+  width: 52px; height: 52px; border-radius: 16px;
+  display: grid; place-items: center;
+  background: var(--mint); color: var(--mint-ink); font-weight: 750; font-size: 24px;
+}
+.eyebrow { color: var(--mint); letter-spacing: 0.08em; font-size: 12px; }
+h1 { font-size: 40px; line-height: 1.05; margin: 4px 0; }
+.lead, .hint, .state, .url { color: var(--muted); line-height: 1.55; }
+.lead { max-width: 62ch; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  padding: 22px;
+}
+.host { display: grid; grid-template-columns: 1fr 220px; gap: 22px; align-items: center; }
+.host img { width: 220px; height: 220px; background: white; border-radius: 16px; padding: 10px; }
+.secret-label { margin-top: 14px; color: var(--muted); font-size: 13px; }
+.secret {
+  font-size: 40px; letter-spacing: 0.18em; font-variant-numeric: tabular-nums; color: var(--mint);
+}
+.url { word-break: break-all; margin-top: 8px; white-space: pre-line; }
+.row { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+
+form { display: grid; gap: 12px; }
+label { display: grid; gap: 6px; color: var(--muted); font-size: 14px; }
+input, textarea, select {
+  width: 100%; border: 1px solid var(--line); background: #07140f; border-radius: 12px;
+  padding: 12px 14px; outline: none;
+}
+input:focus, textarea:focus, select:focus { border-color: var(--mint); }
+.top select { width: auto; max-width: 42vw; padding: 8px 10px; background: #183028; }
+form button, .dock button, .top button, .ghost, .type-row button, .key {
+  border: 0; border-radius: 12px;
+}
+form button {
+  background: var(--mint); color: var(--mint-ink); font-weight: 700; padding: 14px; margin-top: 4px;
+}
+.ghost { background: transparent; border: 1px solid var(--line) !important; padding: 10px 14px; }
+.error { color: var(--danger); min-height: 1.2em; }
+.state.bad { color: var(--danger); }
+
+#desk {
+  position: fixed; inset: 0; background: #000; display: flex; flex-direction: column;
+}
+.top, .dock {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
+  background: rgba(7, 17, 14, 0.92);
+}
+.top { padding-bottom: 8px; }
+#deskTitle { font-weight: 700; }
+#deskSize { color: var(--muted); font-size: 13px; margin-right: auto; }
+.top button, .dock button { background: #183028; padding: 10px 12px; }
+#stage { flex: 1; position: relative; overflow: hidden; touch-action: none; }
+#screen {
+  position: absolute; left: 0; top: 0; transform-origin: 0 0;
+  background: #000; touch-action: none;
+}
+#keys {
+  background: #0c1a15; border-top: 1px solid var(--line);
+  padding: 10px 12px calc(12px + env(safe-area-inset-bottom));
+  max-height: 46vh; overflow: auto;
+}
+.key-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.key, .type-row button { background: #183028; padding: 10px 12px; }
+.key.on { background: var(--mint); color: var(--mint-ink); }
+.type-row { display: grid; gap: 8px; margin-top: 10px; color: var(--muted); font-size: 13px; }
+.type-row span { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+.toast {
+  position: absolute; left: 12px; right: 12px; top: 56px;
+  background: #3a1612; color: white; border-radius: 12px; padding: 10px 12px;
+}
+
+@media (max-width: 800px) {
+  .host { grid-template-columns: 1fr; }
+  .host img { width: min(220px, 70vw); height: auto; }
+  h1 { font-size: 34px; }
+}
