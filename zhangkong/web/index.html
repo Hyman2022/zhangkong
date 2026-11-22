@@ -57,26 +57,76 @@
       <span id="deskTitle">远程桌面</span>
       <select id="deskResolution" aria-label="远程桌面分辨率"></select>
       <span id="deskSize"></span>
+      <button type="button" id="fullScreen">全屏</button>
       <button type="button" id="hangup">断开</button>
     </header>
     <div id="stage">
       <canvas id="screen" tabindex="0" aria-label="远程桌面"></canvas>
+      <div id="remoteCursor" aria-hidden="true">
+        <svg viewBox="0 0 17 21" width="9" height="11" aria-hidden="true">
+          <path d="M1.2 1.2v15l4-3.6 3.1 6.8 2.5-1.2-3.1-6.8h5.5L1.2 1.2z" fill="#fff" stroke="#111" stroke-width="1.8" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <section id="keys" hidden>
+        <div class="panel-bar">
+          <span>键盘</span>
+          <button type="button" id="keyFold">收起</button>
+        </div>
+        <div class="key-grid" id="keyGrid"></div>
+        <div class="shortcuts" aria-label="快捷键">
+          <button type="button" data-chord="ControlLeft,KeyC">复制</button>
+          <button type="button" data-chord="ControlLeft,KeyV">粘贴</button>
+          <button type="button" data-chord="ControlLeft,KeyX">剪切</button>
+          <button type="button" data-chord="MetaLeft,KeyD">显示桌面</button>
+          <button type="button" data-chord="AltLeft,Tab">切换窗口</button>
+          <button type="button" data-chord="ControlLeft,ShiftLeft,Escape">任务管理器</button>
+        </div>
+        <label class="type-row">
+          <textarea id="typeBox" rows="1" placeholder="中文在这里输入" title="选完词会发到电脑，删除键会删掉电脑上刚打的字。"></textarea>
+          <button type="button" id="typeSend">发送</button>
+        </label>
+      </section>
+      <section id="trackpad">
+        <div class="panel-bar" id="padHandle">
+          <span>触控板 · 按住拖动</span>
+          <span class="panel-actions">
+            <button type="button" id="padHelp" aria-expanded="false">帮助</button>
+            <button type="button" id="padFold">收起</button>
+          </span>
+        </div>
+        <p class="pad-legend" id="padLegend" hidden>轻点左键，双指轻点右键。<br>双指滑动滚动，张开或捏合是缩放。<br>三指点一下打开搜索。上滑任务视图，下滑显示桌面，左右切换窗口。<br>四指点一下打开通知，左右切换桌面。<br>按住再拖，或连点两下再拖。</p>
+        <div class="shortcuts" aria-label="快捷键">
+          <button type="button" data-chord="ControlLeft,KeyC">复制</button>
+          <button type="button" data-chord="ControlLeft,KeyV">粘贴</button>
+          <button type="button" data-chord="ControlLeft,KeyX">剪切</button>
+          <button type="button" data-key="Backspace">删除</button>
+          <button type="button" data-chord="MetaLeft,KeyD">显示桌面</button>
+          <button type="button" data-chord="AltLeft,Tab">切换窗口</button>
+          <button type="button" data-chord="ControlLeft,ShiftLeft,Escape">任务管理器</button>
+        </div>
+        <div id="padSurface">
+          <strong>在这块里滑动</strong>
+        </div>
+      </section>
+      <div id="floatBar" hidden>
+        <div id="floatMenu" hidden>
+          <button type="button" id="floatKeys">键盘</button>
+          <button type="button" id="floatPad">触控板</button>
+          <button type="button" id="floatRight">右键</button>
+          <button type="button" id="floatFit">适应</button>
+          <button type="button" id="exitFull">退出全屏</button>
+          <button type="button" id="hangup3">断开</button>
+        </div>
+        <button type="button" id="floatPeek" aria-expanded="false" aria-label="菜单"></button>
+      </div>
     </div>
     <footer class="dock">
       <button type="button" id="keyToggle">键盘</button>
+      <button type="button" id="padToggle">触控板</button>
       <button type="button" id="rightArm">右键</button>
       <button type="button" id="fitView">适应</button>
       <button type="button" id="hangup2">断开</button>
     </footer>
-    <section id="keys" hidden>
-      <div class="key-grid" id="keyGrid"></div>
-      <label class="type-row">在这里打字，选完词会发到电脑。Ctrl、Alt、Shift、Win 点一下会按住，断开时会全部松开。
-        <span>
-          <textarea id="typeBox" rows="2" placeholder="中文在这里输入"></textarea>
-          <button type="button" id="typeSend">发送</button>
-        </span>
-      </label>
-    </section>
     <p id="deskError" class="toast" hidden></p>
   </section>
   <script type="module" src="/app.js"></script>

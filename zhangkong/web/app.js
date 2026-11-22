@@ -156,6 +156,7 @@ function pickSize() {
 }
 
 function layout() {
+  restoreBall();
   if (!canvas.width) return;
   const bounds = stage.getBoundingClientRect();
   const fit = Math.min(bounds.width / canvas.width, bounds.height / canvas.height);
@@ -172,6 +173,9 @@ function layout() {
   canvas.style.width = `${canvas.width * fit}px`;
   canvas.style.height = `${canvas.height * fit}px`;
   canvas.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
+  restorePadPosition();
+  clampPad();
+  placeRemoteCursor();
 }
 
 function pointOf(event) {
@@ -221,6 +225,7 @@ function clearLatchedKeys() {
 function dropSession(target) {
   clearLatchedKeys();
   dragging = false;
+  padDragging = false;
   if (!target) return Promise.resolve();
   try { target.releaseAllInputs(); } catch { /* 连接可能已经断了 */ }
   return new Promise((resolve) => {
@@ -275,10 +280,14 @@ async function connect(event) {
     canvas.height = desktop.height;
     $("deskTitle").textContent = "已连接";
     $("deskSize").textContent = `${desktop.width} × ${desktop.height}`;
+    rememberCursor(desktop.width / 2, desktop.height / 2);
     $("gate").hidden = true;
     $("desk").hidden = false;
     view = { scale: 1, x: 0, y: 0 };
     layout();
+    const here = cursorPoint();
+    mouseMove(here.x, here.y);
+    placeRemoteCursor();
     canvas.focus();
     const current = session;
     current.run().then((info) => {
@@ -309,68 +318,164 @@ function disconnect() {
 }
 
 const pointers = new Map();
+const TAP_PX = 14;
+const HOLD_MS = 320;
+let cursor = { x: 0, y: 0 };
+let padDragging = false;
 let dragging = false;
 let pressTimer = 0;
 let pinch = null;
 
+function rememberCursor(x, y) {
+  if (!canvas.width || !canvas.height) return;
+  cursor.x = Math.max(0, Math.min(canvas.width - 1, x));
+  cursor.y = Math.max(0, Math.min(canvas.height - 1, y));
+  placeRemoteCursor();
+}
+
+function placeRemoteCursor() {
+  const mark = $("remoteCursor");
+  const canvasRect = canvas.getBoundingClientRect();
+  if (!canvas.width || !canvas.height || $("desk").hidden || !canvasRect.width || !canvasRect.height) {
+    mark.classList.remove("on");
+    return;
+  }
+  const x = canvasRect.left + (cursor.x / canvas.width) * canvasRect.width;
+  const y = canvasRect.top + (cursor.y / canvas.height) * canvasRect.height;
+  mark.classList.add("on");
+  mark.style.transform = `translate(${x}px, ${y}px)`;
+}
+
+function cursorPoint() {
+  return { x: Math.round(cursor.x), y: Math.round(cursor.y) };
+}
+
+function nudgeCursor(dx, dy) {
+  const rect = canvas.getBoundingClientRect();
+  if (!rect.width || !rect.height || !canvas.width) return cursorPoint();
+  const gain = 1.35;
+  rememberCursor(
+    cursor.x + dx * (canvas.width / rect.width) * gain,
+    cursor.y + dy * (canvas.height / rect.height) * gain,
+  );
+  const here = cursorPoint();
+  mouseMove(here.x, here.y);
+  return here;
+}
+
+function releaseDrag() {
+  if (!dragging) return;
+  send([DeviceEvent.mouseButtonReleased(0)]);
+  dragging = false;
+}
+
+function releasePadDrag() {
+  if (!padDragging) return;
+  send([DeviceEvent.mouseButtonReleased(0)]);
+  padDragging = false;
+}
+
+function beginTwoFinger() {
+  clearTimeout(pressTimer);
+  releaseDrag();
+  const [a, b] = [...pointers.values()];
+  pinch = {
+    dist: Math.hypot(a.x - b.x, a.y - b.y),
+    scale: view.scale,
+    midX: (a.x + b.x) / 2,
+    midY: (a.y + b.y) / 2,
+    accX: 0,
+    accY: 0,
+    scrolled: false,
+    zoomed: false,
+  };
+}
+
+function updateTwoFinger() {
+  if (!pinch || pointers.size < 2) return;
+  const [a, b] = [...pointers.values()];
+  const dist = Math.hypot(a.x - b.x, a.y - b.y);
+  const midX = (a.x + b.x) / 2;
+  const midY = (a.y + b.y) / 2;
+  for (const item of pointers.values()) {
+    if (Math.hypot(item.x - item.ox, item.y - item.oy) > TAP_PX) item.moved = true;
+  }
+  if (pinch.dist > 24 && Math.abs(dist - pinch.dist) > 28) {
+    pinch.zoomed = true;
+    view.scale = Math.min(4, Math.max(1, pinch.scale * (dist / pinch.dist)));
+    layout();
+    return;
+  }
+  if (pinch.zoomed) return;
+  pinch.accX += midX - pinch.midX;
+  pinch.accY += midY - pinch.midY;
+  pinch.midX = midX;
+  pinch.midY = midY;
+  const step = 36;
+  if (Math.abs(pinch.accY) >= step && Math.abs(pinch.accY) >= Math.abs(pinch.accX)) {
+    const ticks = Math.trunc(pinch.accY / step);
+    pinch.accY -= ticks * step;
+    pinch.scrolled = true;
+    send([DeviceEvent.wheelRotations(true, ticks > 0 ? -1 : 1, RotationUnit.Line)]);
+  } else if (Math.abs(pinch.accX) >= step) {
+    const ticks = Math.trunc(pinch.accX / step);
+    pinch.accX -= ticks * step;
+    pinch.scrolled = true;
+    send([DeviceEvent.wheelRotations(false, ticks > 0 ? -1 : 1, RotationUnit.Line)]);
+  }
+}
+
 stage.addEventListener("pointerdown", (event) => {
+  if (!event.target.closest("#floatBar") && !$("floatMenu").hidden) setFloatOpen(false);
+  if (event.target.closest("#keys, #trackpad, #floatBar, button")) return;
   try { stage.setPointerCapture(event.pointerId); } catch { /* 指针可能已经松开 */ }
   pointers.set(event.pointerId, {
     x: event.clientX, y: event.clientY, ox: event.clientX, oy: event.clientY, moved: false,
   });
-  if (pointers.size === 1) {
-    const here = pointOf(event);
-    mouseMove(here.x, here.y);
-    clearTimeout(pressTimer);
-    pressTimer = setTimeout(() => {
-      const current = pointers.get(event.pointerId);
-      if (!current || current.moved || dragging || pointers.size !== 1) return;
-      const at = pointOf({ clientX: current.x, clientY: current.y });
-      clickButton(2, at.x, at.y);
-      current.consumed = true;
-    }, 480);
+  if (pointers.size === 2) {
+    beginTwoFinger();
     return;
   }
+  if (pointers.size > 2) {
+    pinch = null;
+    clearTimeout(pressTimer);
+    releaseDrag();
+    return;
+  }
+  const here = pointOf(event);
+  rememberCursor(here.x, here.y);
+  mouseMove(here.x, here.y);
   clearTimeout(pressTimer);
-  if (dragging) {
-    send([DeviceEvent.mouseButtonReleased(0)]);
-    dragging = false;
-  }
-  if (pointers.size === 2) {
-    const [a, b] = [...pointers.values()];
-    pinch = {
-      dist: Math.hypot(a.x - b.x, a.y - b.y),
-      scale: view.scale,
-      midY: (a.y + b.y) / 2,
-    };
-  }
+  pressTimer = setTimeout(() => {
+    const current = pointers.get(event.pointerId);
+    if (!current || current.moved || dragging || pointers.size !== 1) return;
+    const at = pointOf({ clientX: current.x, clientY: current.y });
+    clickButton(2, at.x, at.y);
+    current.consumed = true;
+  }, 480);
 });
 
 stage.addEventListener("pointermove", (event) => {
   const start = pointers.get(event.pointerId);
   if (!start) return;
+  const dx = event.clientX - start.x;
+  const dy = event.clientY - start.y;
   start.x = event.clientX;
   start.y = event.clientY;
   if (pointers.size >= 2 && pinch) {
-    const [a, b] = [...pointers.values()];
-    const dist = Math.hypot(a.x - b.x, a.y - b.y);
-    const midY = (a.y + b.y) / 2;
-    if (pinch.dist > 20 && Math.abs(dist - pinch.dist) > 16) {
-      view.scale = Math.min(4, Math.max(1, pinch.scale * (dist / pinch.dist)));
-      layout();
-    } else if (Math.abs(midY - pinch.midY) > 10) {
-      send([DeviceEvent.wheelRotations(true, midY > pinch.midY ? -1 : 1, RotationUnit.Line)]);
-      pinch.midY = midY;
-    }
+    updateTwoFinger();
     return;
   }
+  const travel = Math.hypot(start.x - start.ox, start.y - start.oy);
   const here = pointOf(event);
-  if (Math.hypot(event.clientX - start.ox, event.clientY - start.oy) <= 8) {
+  if (travel <= 8) {
     mouseMove(here.x, here.y);
+    rememberCursor(here.x, here.y);
     return;
   }
   clearTimeout(pressTimer);
   start.moved = true;
+  rememberCursor(here.x, here.y);
   if (!dragging) {
     dragging = true;
     send([DeviceEvent.mouseMove(here.x, here.y), DeviceEvent.mouseButtonPressed(0)]);
@@ -383,18 +488,41 @@ stage.addEventListener("pointerup", (event) => {
   const start = pointers.get(event.pointerId);
   pointers.delete(event.pointerId);
   clearTimeout(pressTimer);
-  if (pointers.size < 2) pinch = null;
-  if (!start || pointers.size > 0) return;
+  if (!start) return;
+  if (pinch && pointers.size < 2) {
+    const travel = Math.hypot(start.x - start.ox, start.y - start.oy);
+    const other = [...pointers.values()][0];
+    const otherStill = !other || (!other.moved && Math.hypot(other.x - other.ox, other.y - other.oy) <= TAP_PX);
+    const tap = !pinch.scrolled && !pinch.zoomed && travel <= TAP_PX && otherStill;
+    for (const item of pointers.values()) item.consumed = true;
+    const midX = other ? (start.x + other.x) / 2 : start.x;
+    const midY = other ? (start.y + other.y) / 2 : start.y;
+    const here = pointOf({ clientX: midX, clientY: midY });
+    rememberCursor(here.x, here.y);
+    pinch = null;
+    if (tap) {
+      rightNext = false;
+      paintRight();
+      clickButton(2, here.x, here.y);
+    }
+    return;
+  }
+  if (pointers.size > 0) return;
+  if (start.consumed) {
+    releaseDrag();
+    return;
+  }
   const here = pointOf(event);
   if (dragging) {
     send([DeviceEvent.mouseMove(here.x, here.y), DeviceEvent.mouseButtonReleased(0)]);
     dragging = false;
     return;
   }
-  if (start.consumed || start.moved) return;
+  if (start.moved) return;
+  rememberCursor(here.x, here.y);
   const button = rightNext ? 2 : 0;
   rightNext = false;
-  $("rightArm").classList.remove("on");
+  paintRight();
   clickButton(button, here.x, here.y);
 });
 
@@ -402,9 +530,514 @@ stage.addEventListener("pointercancel", () => {
   pointers.clear();
   clearTimeout(pressTimer);
   pinch = null;
-  if (dragging) send([DeviceEvent.mouseButtonReleased(0)]);
-  dragging = false;
+  releaseDrag();
 });
+
+const padPointers = new Map();
+let padPinch = null;
+let padMulti = null;
+let padTimer = 0;
+let lastPadTap = 0;
+const padSurface = $("padSurface");
+
+function chord(names) {
+  const events = [];
+  for (const name of names) {
+    const code = SCAN[name];
+    if (code == null) return;
+    events.push(DeviceEvent.keyPressed(code));
+  }
+  for (const name of [...names].reverse()) events.push(DeviceEvent.keyReleased(SCAN[name]));
+  send(events);
+}
+
+function fingerMid() {
+  const pts = [...padPointers.values()];
+  return {
+    x: pts.reduce((sum, item) => sum + item.x, 0) / pts.length,
+    y: pts.reduce((sum, item) => sum + item.y, 0) / pts.length,
+  };
+}
+
+function beginPadFingers() {
+  clearTimeout(padTimer);
+  releasePadDrag();
+  const [a, b] = [...padPointers.values()];
+  padPinch = {
+    dist: Math.hypot(a.x - b.x, a.y - b.y),
+    midX: (a.x + b.x) / 2,
+    midY: (a.y + b.y) / 2,
+    accX: 0,
+    accY: 0,
+    scrolled: false,
+    zoomed: false,
+  };
+}
+
+function beginPadMulti(count) {
+  clearTimeout(padTimer);
+  releasePadDrag();
+  const already = Boolean(padPinch && (padPinch.scrolled || padPinch.zoomed));
+  padPinch = null;
+  const mid = fingerMid();
+  if (padMulti && !padMulti.fired) {
+    padMulti.count = Math.max(padMulti.count, count);
+    return;
+  }
+  padMulti = { count, midX: mid.x, midY: mid.y, fired: already };
+}
+
+function padSwipe(count, horizontal, positive) {
+  if (count >= 4) {
+    if (horizontal) chord(positive ? ["ControlLeft", "MetaLeft", "ArrowRight"] : ["ControlLeft", "MetaLeft", "ArrowLeft"]);
+    else chord(positive ? ["MetaLeft", "KeyD"] : ["MetaLeft", "Tab"]);
+    return;
+  }
+  if (horizontal) chord(positive ? ["AltLeft", "Tab"] : ["AltLeft", "ShiftLeft", "Tab"]);
+  else chord(positive ? ["MetaLeft", "KeyD"] : ["MetaLeft", "Tab"]);
+}
+
+function remoteZoom(spread) {
+  send([
+    DeviceEvent.keyPressed(SCAN.ControlLeft),
+    DeviceEvent.wheelRotations(true, spread ? 1 : -1, RotationUnit.Line),
+    DeviceEvent.keyReleased(SCAN.ControlLeft),
+  ]);
+}
+
+function updatePadFingers() {
+  if (!padPinch || padPointers.size < 2) return;
+  const [a, b] = [...padPointers.values()];
+  const dist = Math.hypot(a.x - b.x, a.y - b.y);
+  const midX = (a.x + b.x) / 2;
+  const midY = (a.y + b.y) / 2;
+  for (const item of padPointers.values()) {
+    if (Math.hypot(item.x - item.ox, item.y - item.oy) > TAP_PX) item.moved = true;
+  }
+  const grew = dist - padPinch.dist;
+  if (Math.abs(grew) > 26) {
+    padPinch.zoomed = true;
+    padPinch.dist = dist;
+    remoteZoom(grew > 0);
+    return;
+  }
+  if (padPinch.zoomed) return;
+  padPinch.accX += midX - padPinch.midX;
+  padPinch.accY += midY - padPinch.midY;
+  padPinch.midX = midX;
+  padPinch.midY = midY;
+  const step = 28;
+  if (Math.abs(padPinch.accY) >= step && Math.abs(padPinch.accY) >= Math.abs(padPinch.accX)) {
+    const ticks = Math.trunc(padPinch.accY / step);
+    padPinch.accY -= ticks * step;
+    padPinch.scrolled = true;
+    send([DeviceEvent.wheelRotations(true, ticks > 0 ? -1 : 1, RotationUnit.Line)]);
+  } else if (Math.abs(padPinch.accX) >= step) {
+    const ticks = Math.trunc(padPinch.accX / step);
+    padPinch.accX -= ticks * step;
+    padPinch.scrolled = true;
+    send([DeviceEvent.wheelRotations(false, ticks > 0 ? -1 : 1, RotationUnit.Line)]);
+  }
+}
+
+function updatePadMulti() {
+  if (!padMulti || padMulti.fired || padPointers.size < 3) return;
+  const mid = fingerMid();
+  const dx = mid.x - padMulti.midX;
+  const dy = mid.y - padMulti.midY;
+  if (Math.hypot(dx, dy) < 42) return;
+  padMulti.fired = true;
+  for (const item of padPointers.values()) item.moved = true;
+  const horizontal = Math.abs(dx) > Math.abs(dy);
+  padSwipe(padMulti.count, horizontal, (horizontal ? dx : dy) > 0);
+}
+
+padSurface.addEventListener("pointerdown", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  try { padSurface.setPointerCapture(event.pointerId); } catch { /* 指针可能已经松开 */ }
+  padPointers.set(event.pointerId, {
+    x: event.clientX, y: event.clientY, ox: event.clientX, oy: event.clientY,
+    moved: false, doubleDrag: padPointers.size === 0 && Date.now() - lastPadTap < 320,
+  });
+  if (padPointers.size === 2) {
+    beginPadFingers();
+    return;
+  }
+  if (padPointers.size >= 3) {
+    beginPadMulti(Math.min(padPointers.size, 4));
+    return;
+  }
+  clearTimeout(padTimer);
+  padTimer = setTimeout(() => {
+    const current = padPointers.get(event.pointerId);
+    if (!current || current.moved || padDragging || padPointers.size !== 1 || padPinch || padMulti) return;
+    const here = cursorPoint();
+    send([DeviceEvent.mouseMove(here.x, here.y), DeviceEvent.mouseButtonPressed(0)]);
+    padDragging = true;
+    current.consumed = true;
+  }, HOLD_MS);
+});
+
+padSurface.addEventListener("pointermove", (event) => {
+  const start = padPointers.get(event.pointerId);
+  if (!start) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const dx = event.clientX - start.x;
+  const dy = event.clientY - start.y;
+  start.x = event.clientX;
+  start.y = event.clientY;
+  if (padPointers.size >= 3 && padMulti) {
+    updatePadMulti();
+    return;
+  }
+  if (padPointers.size >= 2 && padPinch) {
+    updatePadFingers();
+    return;
+  }
+  const travel = Math.hypot(start.x - start.ox, start.y - start.oy);
+  if (start.doubleDrag && !padDragging && travel > TAP_PX) {
+    clearTimeout(padTimer);
+    start.moved = true;
+    start.consumed = true;
+    const here = nudgeCursor(dx, dy);
+    send([DeviceEvent.mouseMove(here.x, here.y), DeviceEvent.mouseButtonPressed(0)]);
+    padDragging = true;
+    return;
+  }
+  if (!padDragging && travel <= TAP_PX) return;
+  clearTimeout(padTimer);
+  start.moved = true;
+  nudgeCursor(dx, dy);
+});
+
+padSurface.addEventListener("pointerup", (event) => {
+  const start = padPointers.get(event.pointerId);
+  padPointers.delete(event.pointerId);
+  clearTimeout(padTimer);
+  event.stopPropagation();
+  if (!start) return;
+  if (padMulti && padPointers.size < 3) {
+    const travel = Math.hypot(start.x - start.ox, start.y - start.oy);
+    const othersStill = [...padPointers.values()].every((item) => (
+      !item.moved && Math.hypot(item.x - item.ox, item.y - item.oy) <= TAP_PX
+    ));
+    const tap = !padMulti.fired && travel <= TAP_PX && othersStill;
+    const count = padMulti.count;
+    for (const item of padPointers.values()) item.consumed = true;
+    padMulti = null;
+    padPinch = null;
+    if (tap) chord(count >= 4 ? ["MetaLeft", "KeyN"] : ["MetaLeft", "KeyS"]);
+    return;
+  }
+  if (padPinch && padPointers.size < 2) {
+    const travel = Math.hypot(start.x - start.ox, start.y - start.oy);
+    const other = [...padPointers.values()][0];
+    const otherStill = !other || (!other.moved && Math.hypot(other.x - other.ox, other.y - other.oy) <= TAP_PX);
+    const tap = !padPinch.scrolled && !padPinch.zoomed && travel <= TAP_PX && otherStill;
+    for (const item of padPointers.values()) item.consumed = true;
+    padPinch = null;
+    if (tap) {
+      const here = cursorPoint();
+      rightNext = false;
+      paintRight();
+      clickButton(2, here.x, here.y);
+    }
+    return;
+  }
+  if (padPointers.size > 0) return;
+  if (start.consumed) {
+    releasePadDrag();
+    lastPadTap = 0;
+    return;
+  }
+  if (padDragging) {
+    const here = cursorPoint();
+    send([DeviceEvent.mouseMove(here.x, here.y), DeviceEvent.mouseButtonReleased(0)]);
+    padDragging = false;
+    lastPadTap = 0;
+    return;
+  }
+  if (start.moved) {
+    lastPadTap = 0;
+    return;
+  }
+  lastPadTap = Date.now();
+  const here = cursorPoint();
+  const button = rightNext ? 2 : 0;
+  rightNext = false;
+  paintRight();
+  clickButton(button, here.x, here.y);
+});
+
+padSurface.addEventListener("pointercancel", () => {
+  padPointers.clear();
+  clearTimeout(padTimer);
+  padPinch = null;
+  padMulti = null;
+  releasePadDrag();
+});
+
+function setKeys(open) {
+  $("keys").hidden = !open;
+  $("keyToggle").classList.toggle("on", open);
+  $("floatKeys").classList.toggle("on", open);
+  localStorage.setItem("zk-keys", open ? "1" : "0");
+  if (!open) {
+    for (const name of [...held]) tapKey(name, false);
+    clearLatchedKeys();
+  }
+}
+
+function setPad(open) {
+  $("trackpad").hidden = !open;
+  $("padToggle").classList.toggle("on", open);
+  $("floatPad").classList.toggle("on", open);
+  localStorage.setItem("zk-pad-open", open ? "1" : "0");
+  if (!open) {
+    padPointers.clear();
+    clearTimeout(padTimer);
+    padPinch = null;
+    padMulti = null;
+    releasePadDrag();
+  } else {
+    requestAnimationFrame(layout);
+  }
+}
+
+let padDrag = null;
+let padPlaced = false;
+
+function applyPadPosition(x, y) {
+  const pad = $("trackpad");
+  const bounds = stage.getBoundingClientRect();
+  const padRect = pad.getBoundingClientRect();
+  if (!bounds.width || !padRect.width) return;
+  const maxX = Math.max(0, bounds.width - padRect.width);
+  const maxY = Math.max(0, bounds.height - padRect.height);
+  const left = Math.max(0, Math.min(maxX, x));
+  const top = Math.max(0, Math.min(maxY, y));
+  pad.style.left = `${left}px`;
+  pad.style.top = `${top}px`;
+  pad.style.right = "auto";
+  pad.style.bottom = "auto";
+  localStorage.setItem("zk-pad-pos", JSON.stringify({ x: Math.round(left), y: Math.round(top) }));
+}
+
+function restorePadPosition() {
+  if (padPlaced || $("trackpad").hidden) return;
+  const raw = localStorage.getItem("zk-pad-pos");
+  if (!raw) {
+    padPlaced = true;
+    return;
+  }
+  if (!$("trackpad").getBoundingClientRect().width) return;
+  try {
+    const pos = JSON.parse(raw);
+    applyPadPosition(pos.x, pos.y);
+    padPlaced = true;
+  } catch {
+    padPlaced = true;
+  }
+}
+
+function clampPad() {
+  const pad = $("trackpad");
+  if (pad.hidden || pad.style.left === "") return;
+  const left = parseFloat(pad.style.left);
+  const top = parseFloat(pad.style.top);
+  if (Number.isNaN(left) || Number.isNaN(top)) return;
+  applyPadPosition(left, top);
+}
+
+$("padHandle").addEventListener("pointerdown", (event) => {
+  if (event.target.closest("button")) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const padRect = $("trackpad").getBoundingClientRect();
+  const stageRect = stage.getBoundingClientRect();
+  padDrag = {
+    id: event.pointerId,
+    dx: event.clientX - padRect.left,
+    dy: event.clientY - padRect.top,
+  };
+  applyPadPosition(padRect.left - stageRect.left, padRect.top - stageRect.top);
+  try { $("padHandle").setPointerCapture(event.pointerId); } catch { /* 指针可能已经松开 */ }
+});
+$("padHandle").addEventListener("pointermove", (event) => {
+  if (!padDrag || event.pointerId !== padDrag.id) return;
+  const stageRect = stage.getBoundingClientRect();
+  applyPadPosition(event.clientX - stageRect.left - padDrag.dx, event.clientY - stageRect.top - padDrag.dy);
+});
+function endPadDrag(event) {
+  if (!padDrag || event.pointerId !== padDrag.id) return;
+  padDrag = null;
+}
+$("padHandle").addEventListener("pointerup", endPadDrag);
+$("padHandle").addEventListener("pointercancel", endPadDrag);
+
+function paintRight() {
+  $("rightArm").classList.toggle("on", rightNext);
+  $("floatRight").classList.toggle("on", rightNext);
+}
+
+function setFloatOpen(open) {
+  $("floatMenu").hidden = !open;
+  $("floatPeek").setAttribute("aria-expanded", open ? "true" : "false");
+  $("floatPeek").setAttribute("aria-label", open ? "收起" : "菜单");
+  if (open) requestAnimationFrame(clampMenu);
+  else $("floatMenu").style.transform = "translateX(-50%)";
+}
+
+let ballSpot;
+let ballDrag = null;
+let ballHold = 0;
+const ball = $("floatPeek");
+
+function readBallSpot() {
+  if (ballSpot !== undefined) return ballSpot;
+  try { ballSpot = JSON.parse(localStorage.getItem("zk-ball") || "null"); }
+  catch { ballSpot = null; }
+  return ballSpot;
+}
+
+function currentBall() {
+  const bounds = stage.getBoundingClientRect();
+  const rect = $("floatBar").getBoundingClientRect();
+  return {
+    x: rect.left + rect.width / 2 - bounds.left,
+    bottom: bounds.bottom - rect.bottom,
+  };
+}
+
+function clampMenu() {
+  const menu = $("floatMenu");
+  menu.style.transform = "translateX(-50%)";
+  if (menu.hidden) return;
+  const stageRect = stage.getBoundingClientRect();
+  const rect = menu.getBoundingClientRect();
+  let shift = 0;
+  if (rect.left < stageRect.left + 8) shift = stageRect.left + 8 - rect.left;
+  else if (rect.right > stageRect.right - 8) shift = stageRect.right - 8 - rect.right;
+  if (shift) menu.style.transform = `translateX(calc(-50% + ${shift}px))`;
+}
+
+function applyBall(centerX, bottom, persist) {
+  const bounds = stage.getBoundingClientRect();
+  if (!bounds.width || !bounds.height) return;
+  const x = Math.max(15, Math.min(bounds.width - 15, centerX));
+  const b = Math.max(0, Math.min(bounds.height - 30, bottom));
+  const bar = $("floatBar");
+  bar.style.left = `${x}px`;
+  bar.style.bottom = `${b}px`;
+  bar.style.transform = "translateX(-50%)";
+  if (persist) {
+    ballSpot = { x: x / bounds.width, b: b / bounds.height };
+    localStorage.setItem("zk-ball", JSON.stringify(ballSpot));
+  }
+  clampMenu();
+}
+
+function restoreBall() {
+  const spot = readBallSpot();
+  if (!spot) return;
+  const bounds = stage.getBoundingClientRect();
+  applyBall(spot.x * bounds.width, spot.b * bounds.height, false);
+}
+
+function resetBallSlide() {
+  ball.style.transition = "transform 200ms cubic-bezier(.22, .9, .24, 1)";
+  ball.style.transform = "translateX(0) scale(1)";
+}
+
+ball.addEventListener("pointerdown", (event) => {
+  event.preventDefault();
+  ballDrag = { id: event.pointerId, x: event.clientX, y: event.clientY, mode: "hold" };
+  ball.style.transition = "none";
+  clearTimeout(ballHold);
+  ballHold = setTimeout(() => {
+    if (!ballDrag || ballDrag.mode !== "hold") return;
+    ballDrag.mode = "move";
+    ballDrag.origin = currentBall();
+    ball.style.transform = "";
+    ball.classList.add("lift");
+    try { navigator.vibrate(12); } catch { /* 这台设备没有震动 */ }
+  }, 420);
+  try { ball.setPointerCapture(event.pointerId); } catch { /* 指针可能已经松开 */ }
+});
+ball.addEventListener("pointermove", (event) => {
+  if (!ballDrag || event.pointerId !== ballDrag.id) return;
+  const dx = event.clientX - ballDrag.x;
+  const dy = event.clientY - ballDrag.y;
+  if (ballDrag.mode === "move") {
+    applyBall(ballDrag.origin.x + dx, ballDrag.origin.bottom - dy, false);
+    return;
+  }
+  if (ballDrag.mode === "hold" && Math.hypot(dx, dy) > 8) {
+    clearTimeout(ballHold);
+    ballDrag.mode = "swipe";
+  }
+  if (ballDrag.mode === "swipe") {
+    const slide = Math.max(-72, Math.min(72, dx));
+    const scale = 1 + Math.min(Math.abs(slide) / 72, 1) * 0.08;
+    ball.style.transform = `translateX(${slide}px) scale(${scale})`;
+  }
+});
+function endBall(event) {
+  if (!ballDrag || event.pointerId !== ballDrag.id) return;
+  const dx = event.clientX - ballDrag.x;
+  const dy = event.clientY - ballDrag.y;
+  const mode = ballDrag.mode;
+  if (mode === "move") applyBall(ballDrag.origin.x + dx, ballDrag.origin.bottom - dy, true);
+  ballDrag = null;
+  clearTimeout(ballHold);
+  ball.classList.remove("lift");
+  resetBallSlide();
+  if (mode === "move") return;
+  if (mode === "swipe" && Math.abs(dx) >= 36) {
+    setFloatOpen(false);
+    if (dx < 0) setPad(true);
+    else setKeys(true);
+    return;
+  }
+  if (Math.hypot(dx, dy) < 10) setFloatOpen($("floatMenu").hidden);
+}
+ball.addEventListener("pointerup", endBall);
+ball.addEventListener("pointercancel", (event) => {
+  if (!ballDrag || event.pointerId !== ballDrag.id) return;
+  ballDrag = null;
+  clearTimeout(ballHold);
+  ball.classList.remove("lift");
+  resetBallSlide();
+});
+
+function setImmersive(on) {
+  $("desk").classList.toggle("immersive", on);
+  $("floatBar").hidden = !on;
+  if (!on) setFloatOpen(false);
+  $("fullScreen").textContent = on ? "退出全屏" : "全屏";
+  requestAnimationFrame(layout);
+}
+
+async function enterFull() {
+  setImmersive(true);
+  const desk = $("desk");
+  const request = desk.requestFullscreen || desk.webkitRequestFullscreen;
+  try {
+    if (request) await request.call(desk);
+  } catch { /* 浏览器不让进入系统全屏时，上下栏已经收起 */ }
+  layout();
+}
+
+function exitFull() {
+  const exit = document.exitFullscreen || document.webkitExitFullscreen;
+  if (document.fullscreenElement || document.webkitFullscreenElement) {
+    Promise.resolve(exit.call(document)).catch(() => {});
+  }
+  setImmersive(false);
+  layout();
+}
 
 window.addEventListener("resize", layout);
 $("fitView").onclick = () => {
@@ -413,7 +1046,7 @@ $("fitView").onclick = () => {
 };
 
 stage.addEventListener("wheel", (event) => {
-  if (!session || event.target.closest("#keys")) return;
+  if (!session || event.target.closest("#keys, #trackpad")) return;
   event.preventDefault();
   if (event.ctrlKey) {
     view.scale = Math.min(4, Math.max(1, view.scale * (event.deltaY > 0 ? 0.9 : 1.1)));
@@ -425,17 +1058,17 @@ stage.addEventListener("wheel", (event) => {
 }, { passive: false });
 
 const KEYS = [
-  ["Esc", "Escape"], ["Tab", "Tab"], ["Ctrl", "ControlLeft"], ["Alt", "AltLeft"],
-  ["Shift", "ShiftLeft"], ["Win", "MetaLeft"], ["←", "ArrowLeft"], ["↑", "ArrowUp"],
-  ["↓", "ArrowDown"], ["→", "ArrowRight"], ["Enter", "Enter"], ["退格", "Backspace"],
-  ["Del", "Delete"], ["空格", "Space"],
+  ["Esc", "Escape"], ["Ctrl", "ControlLeft"], ["Alt", "AltLeft"], ["Shift", "ShiftLeft"],
+  ["Win", "MetaLeft"], ["Tab", "Tab"], ["Enter", "Enter"], ["退格", "Backspace"],
+  ["←", "ArrowLeft"], ["↑", "ArrowUp"], ["↓", "ArrowDown"], ["→", "ArrowRight"],
+  ["Del", "Delete"], ["空格", "Space", "span"],
 ];
 
 const grid = $("keyGrid");
-for (const [label, code] of KEYS) {
+for (const [label, code, extra] of KEYS) {
   const button = document.createElement("button");
   button.type = "button";
-  button.className = "key";
+  button.className = extra === "span" ? "key span" : "key";
   button.textContent = label;
   const sticky = ["ControlLeft", "AltLeft", "ShiftLeft", "MetaLeft"].includes(code);
   button.onclick = () => {
@@ -466,14 +1099,60 @@ for (const [label, code] of KEYS) {
   grid.appendChild(button);
 }
 
-$("keyToggle").onclick = () => {
-  const opening = $("keys").hidden;
-  $("keys").hidden = !opening;
-  if (!opening) {
-    for (const name of [...held]) tapKey(name, false);
-    clearLatchedKeys();
-  }
+$("keyToggle").onclick = () => setKeys($("keys").hidden);
+$("keyFold").onclick = () => setKeys(false);
+$("padToggle").onclick = () => setPad($("trackpad").hidden);
+$("padHelp").onclick = () => {
+  const legend = $("padLegend");
+  const open = legend.hidden;
+  legend.hidden = !open;
+  $("padHelp").classList.toggle("on", open);
+  $("padHelp").setAttribute("aria-expanded", open ? "true" : "false");
 };
+for (const button of document.querySelectorAll("[data-chord]")) {
+  button.addEventListener("click", () => {
+    if (!session) return;
+    chord(button.dataset.chord.split(","));
+  });
+}
+for (const button of document.querySelectorAll("[data-key]")) {
+  button.addEventListener("click", () => {
+    if (!session) return;
+    tapKey(button.dataset.key, true);
+    tapKey(button.dataset.key, false);
+  });
+}
+$("floatKeys").onclick = () => {
+  setKeys($("keys").hidden);
+  setFloatOpen(false);
+};
+$("floatPad").onclick = () => {
+  setPad($("trackpad").hidden);
+  setFloatOpen(false);
+};
+$("floatRight").onclick = () => {
+  rightNext = !rightNext;
+  paintRight();
+};
+$("floatFit").onclick = () => {
+  view.scale = 1;
+  layout();
+  setFloatOpen(false);
+};
+$("padFold").onclick = () => setPad(false);
+$("fullScreen").onclick = () => {
+  if ($("desk").classList.contains("immersive")) exitFull();
+  else enterFull();
+};
+$("exitFull").onclick = exitFull;
+document.addEventListener("fullscreenchange", () => {
+  setImmersive(Boolean(document.fullscreenElement));
+});
+document.addEventListener("webkitfullscreenchange", () => {
+  setImmersive(Boolean(document.webkitFullscreenElement));
+});
+setKeys(localStorage.getItem("zk-keys") === "1");
+setPad(localStorage.getItem("zk-pad-open") !== "0");
 function flushTypeBox() {
   const box = $("typeBox");
   const text = box.value;
@@ -490,14 +1169,42 @@ $("typeBox").addEventListener("compositionend", () => {
 $("typeBox").addEventListener("input", () => {
   if (!composing) flushTypeBox();
 });
+let lastRemoteDelete = 0;
+function remoteDelete(forward) {
+  const now = Date.now();
+  if (now - lastRemoteDelete < 40) return;
+  lastRemoteDelete = now;
+  const code = forward ? "Delete" : "Backspace";
+  tapKey(code, true);
+  tapKey(code, false);
+}
+function deleteIsLocal() {
+  return composing || $("typeBox").value.length > 0;
+}
+$("typeBox").addEventListener("beforeinput", (event) => {
+  if (!session) return;
+  const forward = event.inputType === "deleteContentForward";
+  const backward = event.inputType === "deleteContentBackward";
+  if (!forward && !backward) return;
+  if (deleteIsLocal()) return;
+  event.preventDefault();
+  remoteDelete(forward);
+});
+$("typeBox").addEventListener("keydown", (event) => {
+  if (!session || (event.key !== "Backspace" && event.key !== "Delete")) return;
+  if (deleteIsLocal()) return;
+  event.preventDefault();
+  remoteDelete(event.key === "Delete");
+});
 $("typeSend").onclick = flushTypeBox;
 $("rightArm").onclick = () => {
   rightNext = !rightNext;
-  $("rightArm").classList.toggle("on", rightNext);
+  paintRight();
 };
 $("login").addEventListener("submit", connect);
 $("hangup").onclick = disconnect;
 $("hangup2").onclick = disconnect;
+$("hangup3").onclick = disconnect;
 
 window.addEventListener("keydown", (event) => {
   if (!session || event.target.matches("input, textarea")) return;

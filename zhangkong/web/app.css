@@ -86,21 +86,113 @@ form button {
 #deskTitle { font-weight: 700; }
 #deskSize { color: var(--muted); font-size: 13px; margin-right: auto; }
 .top button, .dock button { background: #183028; padding: 10px 12px; }
+.dock { flex-wrap: wrap; }
+.dock button.on { background: var(--mint); color: var(--mint-ink); font-weight: 700; }
 #stage { flex: 1; position: relative; overflow: hidden; touch-action: none; }
+#desk.immersive .top, #desk.immersive .dock { display: none; }
+#desk:fullscreen, #desk:-webkit-full-screen { width: 100%; height: 100%; background: #000; }
+#floatBar {
+  position: absolute; z-index: 6; left: 50%; bottom: 0;
+  width: 30px; height: 30px; transform: translateX(-50%);
+}
+#floatMenu {
+  position: absolute; left: 50%; bottom: 38px; transform: translateX(-50%);
+  display: flex; flex-wrap: wrap; justify-content: center; gap: 6px;
+  width: max-content; max-width: min(440px, calc(100vw - 16px));
+  padding: 8px; border-radius: 14px;
+  background: rgba(7, 17, 14, 0.94);
+  border: 1px solid rgba(125, 255, 179, 0.45);
+}
+#floatBar button {
+  border: 0; border-radius: 12px; background: #183028;
+  padding: 8px 12px; font-size: 13px;
+}
+#floatBar #floatPeek {
+  width: 30px; height: 30px; padding: 0; touch-action: none;
+  border: 2px solid rgba(125, 255, 179, 0.9); border-radius: 50%;
+  background: rgba(7, 17, 14, 0.94);
+  transition: transform 200ms cubic-bezier(.22, .9, .24, 1), background 160ms ease, box-shadow 160ms ease;
+}
+#floatBar #floatPeek.lift {
+  transform: scale(1.22);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45);
+}
+#floatBar #floatPeek[aria-expanded="true"] { background: var(--mint); }
+#floatBar button.on { background: var(--mint); color: var(--mint-ink); font-weight: 700; }
+.panel-bar button {
+  border: 0; border-radius: 12px; background: #183028; padding: 8px 12px;
+}
+.panel-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding: 8px 8px 4px; color: var(--mint); font-size: 13px;
+}
+.panel-bar button { background: transparent; color: var(--text); }
+.panel-actions { display: flex; gap: 2px; }
+.panel-bar button.on { color: var(--mint); }
+.shortcuts { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 8px 8px; }
+.shortcuts button {
+  border: 0; border-radius: 10px; background: #183028;
+  padding: 7px 8px; font-size: 12px;
+}
+#padHandle { touch-action: none; cursor: grab; user-select: none; }
+#padHandle:active { cursor: grabbing; }
 #screen {
-  position: absolute; left: 0; top: 0; transform-origin: 0 0;
+  position: absolute; left: 0; top: 0; z-index: 1; transform-origin: 0 0;
   background: #000; touch-action: none;
 }
-#keys {
-  background: #0c1a15; border-top: 1px solid var(--line);
-  padding: 10px 12px calc(12px + env(safe-area-inset-bottom));
-  max-height: 46vh; overflow: auto;
+#remoteCursor {
+  position: fixed; z-index: 40; left: 0; top: 0;
+  width: 9px; height: 11px; display: none; pointer-events: none;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.65));
 }
-.key-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+#remoteCursor.on { display: block; }
+#remoteCursor svg { display: block; width: 9px; height: 11px; }
+#trackpad {
+  position: absolute; z-index: 5; right: 8px; bottom: 8px;
+  width: min(300px, 78vw); max-height: calc(100% - 16px);
+  display: flex; flex-direction: column;
+  background: rgba(12, 26, 21, 0.94);
+  border: 1px solid rgba(125, 255, 179, 0.55);
+  border-radius: 16px;
+}
+.pad-legend {
+  margin: 0 10px 6px; color: var(--muted); font-size: 11px; line-height: 1.45;
+}
+#padSurface {
+  height: 148px; margin: 0 8px 8px; border-radius: 12px;
+  background:
+    radial-gradient(circle at 50% 45%, rgba(125, 255, 179, 0.16), transparent 58%),
+    #07140f;
+  border: 1px dashed rgba(125, 255, 179, 0.35);
+  touch-action: none; user-select: none;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; gap: 6px; padding: 10px; color: var(--muted); font-size: 12px; line-height: 1.45;
+}
+#padSurface strong { color: var(--text); font-size: 14px; }
+#keys {
+  position: absolute; z-index: 5; left: 8px; top: 8px;
+  width: min(248px, 74vw); max-height: calc(100% - 16px);
+  margin: 0; overflow: auto;
+  background: rgba(12, 26, 21, 0.94);
+  border: 1px solid var(--line); border-radius: 16px;
+  padding: 0 6px 8px;
+}
+#keys .panel-bar { padding: 6px 2px 4px; }
+#keys .key-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+#keys .key { padding: 7px 0; font-size: 12px; border-radius: 8px; min-width: 0; }
+#keys .key.span { grid-column: span 3; }
+#keys .shortcuts {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 6px 0 0;
+}
+#keys .shortcuts button { padding: 6px 2px; font-size: 12px; border-radius: 8px; }
+#keys .type-row {
+  display: grid; grid-template-columns: 1fr auto; gap: 4px;
+  margin: 6px 0 0; align-items: stretch;
+}
+#keys textarea { min-height: 0; padding: 6px 8px; border-radius: 8px; resize: none; }
+#keys .type-row button { padding: 6px 10px; border-radius: 8px; }
 .key, .type-row button { background: #183028; padding: 10px 12px; }
 .key.on { background: var(--mint); color: var(--mint-ink); }
-.type-row { display: grid; gap: 8px; margin-top: 10px; color: var(--muted); font-size: 13px; }
-.type-row span { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
 .toast {
   position: absolute; left: 12px; right: 12px; top: 56px;
   background: #3a1612; color: white; border-radius: 12px; padding: 10px 12px;
