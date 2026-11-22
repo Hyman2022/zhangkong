@@ -26,6 +26,7 @@ const canvas = $("screen");
 const stage = $("stage");
 let session = null;
 let wasmReady = false;
+let remoteAudio = null;
 let view = { scale: 1, x: 0, y: 0 };
 let rightNext = false;
 const held = new Set();
@@ -237,6 +238,7 @@ function clearLatchedKeys() {
 // 远程桌面和电脑前的屏幕是同一个登录会话。键按下去却没松开，断开后会留在本机，微信里就打不出字。
 function dropSession(target) {
   clearLatchedKeys();
+  silenceRemoteAudio();
   dragging = false;
   fingerScroll = null;
   padDragging = false;
@@ -261,8 +263,142 @@ function typeText(text) {
   }
 }
 
+function remoteAudioEngine() {
+  if (remoteAudio) return remoteAudio;
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtx) return null;
+  try {
+    let ctx;
+    try {
+      // 和电脑协商的首选采样率一致。每小段各自重采样会在接缝处咔嗒一声。
+      ctx = new AudioCtx({ sampleRate: 48000 });
+    } catch {
+      ctx = new AudioCtx();
+    }
+    const gain = ctx.createGain();
+    gain.gain.value = 1;
+    gain.connect(ctx.destination);
+    remoteAudio = { ctx, gain, nextTime: 0, sources: [] };
+    return remoteAudio;
+  } catch {
+    return null;
+  }
+}
+
+function unlockRemoteAudio() {
+  const engine = remoteAudioEngine();
+  if (engine && engine.ctx.state !== "running") engine.ctx.resume();
+}
+
+function resumeRemoteAudio() {
+  if (remoteAudio && remoteAudio.ctx.state !== "running") remoteAudio.ctx.resume();
+}
+
+function silenceRemoteAudio() {
+  if (!remoteAudio) return;
+  const queued = remoteAudio.sources;
+  remoteAudio.sources = [];
+  remoteAudio.nextTime = 0;
+  for (const source of queued) {
+    try { source.stop(); } catch { /* 这一段已经播完 */ }
+  }
+}
+
+function suspendRemoteAudio() {
+  silenceRemoteAudio();
+  if (remoteAudio && remoteAudio.ctx.state === "running") remoteAudio.ctx.suspend();
+}
+
+function bufferFromMixed(engine, mixed, sampleRate) {
+  const ctxRate = engine.ctx.sampleRate;
+  if (sampleRate === ctxRate) {
+    const buffer = engine.ctx.createBuffer(1, mixed.length, ctxRate);
+    buffer.getChannelData(0).set(mixed);
+    return buffer;
+  }
+  const outFrames = Math.max(1, Math.round(mixed.length * ctxRate / sampleRate));
+  const buffer = engine.ctx.createBuffer(1, outFrames, ctxRate);
+  const out = buffer.getChannelData(0);
+  const step = sampleRate / ctxRate;
+  const last = mixed.length - 1;
+  for (let i = 0; i < outFrames; i += 1) {
+    const pos = i * step;
+    const index = Math.min(Math.floor(pos), last);
+    const next = Math.min(index + 1, last);
+    const frac = pos - index;
+    out[i] = mixed[index] + (mixed[next] - mixed[index]) * frac;
+  }
+  return buffer;
+}
+
+function playRemoteWave(message) {
+  const engine = remoteAudioEngine();
+  if (!engine) return;
+  try {
+    if (engine.ctx.state !== "running") engine.ctx.resume();
+    const sampleRate = message.sampleRate | 0;
+    const channels = message.channels | 0;
+    const data = message.data;
+    if (!sampleRate || channels < 1 || !data || data.length < channels * 2) return;
+    const frames = Math.floor(data.length / (2 * channels));
+    if (!frames) return;
+    // 平板多半只有一只喇叭。左右声道若在喇叭里反相相加，会只剩下人声或只剩下伴奏。
+    // 先合成一路，人声和伴奏都在。
+    const mixed = new Float32Array(frames);
+    const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+    const scale = 1 / (32768 * channels);
+    for (let i = 0; i < frames; i += 1) {
+      let sum = 0;
+      const base = i * channels;
+      for (let channel = 0; channel < channels; channel += 1) {
+        sum += view.getInt16((base + channel) * 2, true);
+      }
+      mixed[i] = sum * scale;
+    }
+    const buffer = bufferFromMixed(engine, mixed, sampleRate);
+    const source = engine.ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(engine.gain);
+    const now = engine.ctx.currentTime;
+    // 断流就从现在重新接上。积压超过一秒就丢掉旧队列，避免声音越来越落后，也不要两段叠在一起。
+    if (engine.nextTime > now + 1) {
+      const queued = engine.sources;
+      engine.sources = [];
+      for (const old of queued) {
+        try { old.stop(); } catch { /* 已经结束 */ }
+      }
+      engine.nextTime = now + 0.06;
+    } else if (!(engine.nextTime > now + 0.02)) {
+      engine.nextTime = now + 0.06;
+    }
+    source.start(engine.nextTime);
+    engine.nextTime += buffer.duration;
+    engine.sources.push(source);
+    source.onended = () => {
+      const index = engine.sources.indexOf(source);
+      if (index >= 0) engine.sources.splice(index, 1);
+    };
+  } catch { /* 这一包播不了就丢掉，连接继续 */ }
+}
+
+function onRemoteAudio(message) {
+  if (!message || typeof message !== "object") return;
+  if (message.type === "wave") {
+    playRemoteWave(message);
+    return;
+  }
+  if (message.type === "volume" && remoteAudio) {
+    const left = Math.max(0, Math.min(1, Number(message.left) || 0));
+    const right = Math.max(0, Math.min(1, Number(message.right) || 0));
+    remoteAudio.gain.gain.setValueAtTime(Math.max(left, right), remoteAudio.ctx.currentTime);
+    return;
+  }
+  if (message.type === "close") silenceRemoteAudio();
+}
+
 async function connect(event) {
   event.preventDefault();
+  unlockRemoteAudio();
   const error = $("loginError");
   error.textContent = "";
   const button = $("connect");
@@ -284,6 +420,7 @@ async function connect(event) {
     builder.desktopSize(new DesktopSize(size.width, size.height));
     builder.renderCanvas(canvas);
     builder.extension(new Extension("enable_credssp", true));
+    builder.extension(new Extension("audio_playback", onRemoteAudio));
     builder.setCursorStyleCallbackContext(canvas);
     builder.setCursorStyleCallback((style) => {
       noteCursorStyle(style);
@@ -324,6 +461,7 @@ function finish(message) {
   const current = session;
   session = null;
   dropSession(current);
+  suspendRemoteAudio();
   showGate(message || "");
 }
 
@@ -1513,10 +1651,13 @@ function onResolutionPick(event) {
 $("resolution").addEventListener("change", onResolutionPick);
 $("deskResolution").addEventListener("change", onResolutionPick);
 
+window.addEventListener("pointerdown", resumeRemoteAudio, { passive: true });
+
 window.addEventListener("pagehide", () => {
   const current = session;
   session = null;
   clearLatchedKeys();
+  suspendRemoteAudio();
   if (!current) return;
   try { current.releaseAllInputs(); } catch { /* 页面正在关闭 */ }
   try { current.shutdown(); } catch { /* 页面正在关闭 */ }

@@ -4,7 +4,7 @@
 export class ClipboardData {
     free(): void;
     [Symbol.dispose](): void;
-    addBinary(mime_type: string, binary: Uint8Array | number[]): void;
+    addBinary(mime_type: string, binary: Uint8Array): void;
     addText(mime_type: string, text: string): void;
     constructor();
     isEmpty(): boolean;
@@ -298,19 +298,19 @@ export interface InitOutput {
     readonly sessionbuilder_webSocketProtocols: (a: number, b: any) => number;
     readonly sessionterminationinfo_reason: (a: number) => [number, number];
     readonly setup: (a: number, b: number) => void;
-    readonly wasm_bindgen_ada118ad91144bf___convert__closures_____invoke___js_sys_d9818256a1d6cf7b___Function_fn_wasm_bindgen_ada118ad91144bf___JsValue_____wasm_bindgen_ada118ad91144bf___sys__Undefined___js_sys_d9818256a1d6cf7b___Function_fn_wasm_bindgen_ada118ad91144bf___JsValue_____wasm_bindgen_ada118ad91144bf___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;
-    readonly wasm_bindgen_ada118ad91144bf___convert__closures_____invoke___wasm_bindgen_ada118ad91144bf___JsValue__core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_ada118ad91144bf___JsError___true_: (a: number, b: number, c: any) => [number, number];
-    readonly wasm_bindgen_ada118ad91144bf___convert__closures_____invoke___web_sys_83db9074b053bb43___features__gen_CloseEvent__CloseEvent______true_: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen_ada118ad91144bf___convert__closures_____invoke___web_sys_83db9074b053bb43___features__gen_CloseEvent__CloseEvent______true__69: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen_ada118ad91144bf___convert__closures_____invoke___web_sys_83db9074b053bb43___features__gen_CloseEvent__CloseEvent______true__70: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen_ada118ad91144bf___convert__closures_____invoke_______true_: (a: number, b: number) => void;
-    readonly wasm_bindgen_ada118ad91144bf___convert__closures_____invoke_______true__1_: (a: number, b: number) => void;
+    readonly wasm_bindgen_9b313cc0a0e8a7f9___convert__closures_____invoke___js_sys_3101bfa82ff28dbd___Function_fn_wasm_bindgen_9b313cc0a0e8a7f9___JsValue_____wasm_bindgen_9b313cc0a0e8a7f9___sys__Undefined___js_sys_3101bfa82ff28dbd___Function_fn_wasm_bindgen_9b313cc0a0e8a7f9___JsValue_____wasm_bindgen_9b313cc0a0e8a7f9___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;
+    readonly wasm_bindgen_9b313cc0a0e8a7f9___convert__closures_____invoke___wasm_bindgen_9b313cc0a0e8a7f9___JsValue__core_d941ad8722425d2e___result__Result_____wasm_bindgen_9b313cc0a0e8a7f9___JsError___true_: (a: number, b: number, c: any) => [number, number];
+    readonly wasm_bindgen_9b313cc0a0e8a7f9___convert__closures_____invoke___web_sys_aedd7092ef9a0390___features__gen_CloseEvent__CloseEvent______true_: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen_9b313cc0a0e8a7f9___convert__closures_____invoke___web_sys_aedd7092ef9a0390___features__gen_CloseEvent__CloseEvent______true__69: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen_9b313cc0a0e8a7f9___convert__closures_____invoke___web_sys_aedd7092ef9a0390___features__gen_CloseEvent__CloseEvent______true__70: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen_9b313cc0a0e8a7f9___convert__closures_____invoke_______true_: (a: number, b: number) => void;
+    readonly wasm_bindgen_9b313cc0a0e8a7f9___convert__closures_____invoke_______true__1_: (a: number, b: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
-    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_exn_store: (a: number) => void;
     readonly __externref_table_alloc: () => number;
     readonly __wbindgen_externrefs: WebAssembly.Table;
+    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_destroy_closure: (a: number, b: number) => void;
     readonly __externref_drop_slice: (a: number, b: number) => void;
     readonly __externref_table_dealloc: (a: number) => void;
